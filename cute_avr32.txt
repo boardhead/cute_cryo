@@ -1,0 +1,224 @@
+================================================================================
+
+Connection map for the EVK1101 (for CUTE position control):
+
+NOTE: PA32-PA43 are labelled PB0-PB11 on the EVK1101!
+
+ADCs (as used by current resurfacer task)
+----
+0 - PA03
+1 - PA04
+2 - PA30 (light)
+3 - PA31 (temperature)
+
+Motors (pulse output/direction/on)
+------
+m0 - PB00/PB01/PB05
+m1 - PB02/PB03/PB06
+m2 - PB10/PB11/PB08
+
+LEDs
+----
+0 - PA07
+1 - PA08
+2 - PA21
+3 - PA22 (used for wdt)
+
+Push buttons (not used)
+------------
+0 - PB02
+1 - PB03
+
+Joystick (not used)
+--------
+push  - PA13
+left  - PB06
+right - PB09
+up    - PB07
+down  - PB08
+
+SD card (not used)
+-------
+detect   - PB00
+wr prot. - PB01
+
+AVR32 Channels
+--------------
+GPIO  Function A   Function B  Function C   I/O  EVK1101 Usage
+----  ------------ ----------  -----------  ---  ---------------------------
+PA00                                        Y/Y  JTAG1
+PA01                                        Y/Y  JTAG2
+PA02                                        Y/Y  JTAG3
+PA03  ADC0         GCLK0       USB_ID       3/Y  input power supply voltage
+PA04  ADC1         GCLK1       USB_VBOF     3/Y  accelerometer X
+PA05  EXTINT0      ADC2        USART1 DCD   3/Y  accelerometer Y
+PA06  EXTINT1      ADC3        USART1 DSR   3/Y  accelerometer Z
+PA07  PWM0         ADC4        USART1 DTR   3/Y  LED0
+PA08  PWM1         ADC5        USART1 RI    3/Y  LED1
+PA09  TWI SCL      SPI0 NPCS2  USART1 CTS   Y/Y  SPI0 CS2 + TWI SCL
+PA10  TWI SDC      SPI0 NPCS3  USART1 RTS   Y/Y  TWI SDA
+PA11  USART0 RTS   TC A2       PWM0         3/Y  Xin32
+PA12  USART0 CTS   TC B2       PWM1         3/Y  Xout32
+PA13  EIC NMI      PWM2        USART0 CLK   Y/Y  joystick push button
+PA14  SPI0 MOSI    PWM3        EXTINT2      Y/Y  SPI0 MOSI
+PA15  SPI0 SCK     PWM4        USART2 CLK   Y/Y  SPI0 SCK + NEXUS EVTO
+PA16  SPI0 NPCS0   TC CLK1     PWM4         Y/Y  SPI0 CS0
+PA17  SPI0 NPCS1   TC CLK2     SPI0 SCK     Y/Y  SPI0 CS1
+PA18  USART0 RXD   PWM5        SPI0 MISO    3/N  Xin0 (doesn't work as output)
+PA19  USART0 TXD   PWM6        SPI0 MOSI    3/N  Xout0 (doesn't work as output)
+PA20  USART1 CLK   TC CLK0     USART2 RXD   Y/Y  VBUS over current detection
+PA21  PWM2         TC A1       USART2 TXD   N/Y  LED2
+PA22  PWM6         TC B1       ADC TRIGGER  N/Y  LED3 + audio filter 1
+PA23  USART1 TXD   SPI0 NPCS1  EXTINT3      N/Y  U1 Tx
+PA24  USART1 RXD   SPI0 NPCS0  EXTINT4      N/Y  U1 Rx
+PA25  SPI0 MISO    PWM3        EXTINT5      Y/Y  SPI0  MISO
+PA26  USB_ID       USART2 TXD  TC A0        Y/Y  USB ID
+PA27  USB_VBOF     USART2 RXD  TC B0        Y/Y  VBUS enable?
+PA28  USART0 CLK   PWM4        SPI0 MISO    3/Y  audio filter 2 + Xin1
+PA29  TC CLK0      TC CLK1     SPI0 MOSI    3/Y  Xout1
+PA30  ADC6         EIC SCAN0   PM GCLK2     3/Y  light + NEXUS MCKO
+PA31  ADC7         EIC SCAN1   PWM6         3/Y  temperature + NEXUS MD00
+PB00  TC A0        EIC SCAN2   USART2 CTS   N/Y  SD detect + NEXUS MD01
+PB01  TC B0        EIC SCAN3   USART2 RTS   Y/Y  SD wr prot. + NEXUS MD02
+PB02  EXTINT6      TC A1       USART1 TXD   N/Y  push button 0 + NEXUS MD03
+PB03  EXTINT7      TC B1       USART1 RXD   Y/Y  push button 1 + NEXUS MD04
+PB04  USART1 CTS   SPI0 NPCS3  TC CLK2      N/N  U1 CTS + NEXUS MD05 (doesn't work as output)
+PB05  USART1 RTS   SPI0 NPCS2  PWM5         Y/Y  U1 RTS + NEXUS EVTIn
+PB06  SSC RX_CLOCK USART1 DCD  EIC SCAN4    Y/Y  joystick left + NEXUS MSEO1
+PB07  SSC RX_DATA  USART1 DSR  EIC SCAN5    Y/Y  joystick up + NEXUS MSEO0
+PB08  SSC RX_SYNC  USART1 DTR  EIC SCAN6    Y/Y  joystick down
+PB09  SSC TX_CLOCK USART1 RI   EIC SCAN7    Y/Y  joystick right
+PB10  SSC TX_DATA  TC A2       USART0 RXD   Y/Y
+PB11  SSC TX_SYNC  TC B2       USART0 TXD   Y/Y
+
+I/O legend:  Y = OK, 3 = 3.6 V max, N = doesn't work
+
+AVR32 I/O characteristics
+-------------------------
+Input voltage limits:
+-0.3V to 3.6V: PA03-08,PA11-12,PA18-19,PA28-31
+-0.3V to 5.5V: PA00-02,PA09-10,PA13-17,PA20-27,PB00-11
+Ouput current limits:
+4mA: PA00-PA19,PA24-PA31,PB00-PB11
+8mA: PA20-23
+265mA total
+
+
+================================================================================
+
+CUTE AVR32 embedded code
+------------------------
+
+To burn new code:
+
+1) Run AVR32 studio on PC
+2) Select "Build All" from toolbar
+3) Plug in EVK1101 to PC USB port
+4) Press EVK1101 RST button while holding down joystick button
+5) Open DOS window on PC
+6) Change to directory "c:\Documents and Settings\Phil\My Documents\workspace"
+7) Type the following command:
+    batchisp -hardware usb -device at32uc3b0256 -operation erase f loadbuffer \
+     "cute_avr32.elf" program verify start reset 0
+
+burn.bat
+--------
+
+batchisp -hardware usb -device at32uc3b0256 -operation erase f loadbuffer "c:\Documents and Settings\Phil\My Documents\workspace\%1\Debug\%1.elf" program verify start reset 0
+
+Available commands implemented on the AVR32 (ver 1.12)
+------------------------------------------------------
+
+  pa#[-#] [0|1|-|+] - get/set/reset/pull-up programmable i/o A channel
+
+  pb#[-#] [0|1|-|+] - get/set/reset/pull-up programmable i/o B channel
+
+     eg) pa0      - gets state of PA00
+         pa5 0    - drives PA05 output to logic 0
+         pa12 -   - stops driving PA12 (changes from output to input mode)
+         pb5 +    - stops driving PB05 and enables pull-up resistor
+         pa0-7    - gets state of PA00 through PA07 (low bit first)
+         pa7-0    - gets state of PA00 through PA07 (high bit first)
+         pa0-7 -  - set PA00-PA07 to input mode
+         pa0-7 0  - set PA00-PA07 to output all zeros
+         pa7-0 11000101 - set PA00-PA07 to hex 0xc5 (pa7-0 sets high bit first)
+
+  m# ramp SPD   - ramp motor # to speed SPD (# is 0-2; SPD is integer steps/sec)
+                  SPD = integer steps/sec
+
+  m# spd SPD [CLK] - run motor at speed SPD from specified clock source.
+                     SPD = floating point steps/sec (or 0 to stop)
+                     CLK = 1(32kHz),2(6MHz),3(1.5MHz),4(375kHz),5(93.75kHz)
+                     - minimum speed is CLK/65535
+                     - CLK starts out as 3, and only changes if specified
+                     - CLK must be set back to 3 before using ramp command again
+                     - Note: there is currently no hard limit on the maximum
+                       motor speed, but speeds that are too high (>~15kHz) may
+                       cause the code to hang due to CPU speed limitations
+                     - CLK 1 is currently disabled (because it may use PA11/PA12)
+
+  m# stop       - stop motor by ramping down slowly
+
+  m# halt       - halt motor immediately
+
+  m# stat       - get status of motor
+
+  m# pos [POS]  - get/set motor position (in number of steps)
+
+  m# on [ON]    - get/set power to motor windings (ON is 0, 1, + or -)
+                    0 = turn off motor windings
+                    1 = turn on motor windings
+                    + = motor windings output is high when on
+                    - = motor windings output is low when on (inverted)
+
+  m# dir [DIR]  - get/set motor direction (DIR is 0, 1, + or -)
+                    0 = positive direction
+                    1 = negative direction
+                    + = direction signal is high for negative direction
+                    - = direction signal is low for negative direction (inverted)
+
+  m# acc [ACC]  - get/set motor acceleration (integer steps/sec/sec)
+
+  adc#          - read value of internal AVR 10-bit ADC # (0-3)
+                    adc0 = AVR32 ADC0 (pa03)
+                    adc1 = AVR32 ADC1 (pa04)
+                    adc2 = AVR32 ADC6 (pa30, light sensor)
+                    adc3 = AVR32 ADC7 (pa31, temperature sensor)
+  
+  halt          - halt all motors immediately
+
+  wdt [SECS]    - get/set watchdog timer (SECS is integer seconds, 0 to disable)
+
+  p# spd [SPD]  - run PWM# at specified speed (# is 6)
+                    SPD = floating point steps/sec (or 0 to stop)
+                    - speed range is 0.2 Hz to 37.5 kHz
+                    - pulse width is 10.6 microseconds
+
+  p# halt       - stop PWM immediately ("stop" also works)
+
+  p# stat       - get status of PWM
+
+  ser           - get AVR32 serial number
+
+  ver           - get software version number
+
+  help          - show some available commands
+
+  nop           - no operation
+
+LED's
+-----
+
+  LED's 0-3 are connected to PA7, PA8, PA21 and PA22
+
+  LED3 - Turns on if the AVR32 has performed a watchdog timer reset.
+         Turned off again by a "wdt #" command.
+
+Command/response synchronization
+--------------------------------
+
+Commands may be prefixed by a single character ID followed by a "." which
+is echoed back in the response message.
+
+================================================================================
+

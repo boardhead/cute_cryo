@@ -62,6 +62,12 @@ Your browser does not support the HTML5 canvas tag.</canvas></td></tr>
 <script type="text/javascript">
 const kHistoryLen = 600;
 
+// canvas numbers
+const kCanPos = 0;  // positions
+const kCanHis = 1;  // position history
+const kCanLod = 2;  // loads
+const kCanSpd = 3;  // motor speeds
+
 // CUTE parameters
 var max = 2;        // max height in mm
 var min = 0;        // min height in mm
@@ -89,7 +95,7 @@ for (var i=0; i<4; ++i) {
 var bx = 50;    // left margin
 var by = 35;    // top margin
 var sep = 100;  // separation between scales
-var scly = cy[0] - by - 40;   // scale height
+var scly = cy[kCanPos] - by - 40;   // scale height
 var numTicks = 20;
 
 var his = [ ];  // NOTE: don't call this "history" -- doesn't work in Firefox
@@ -97,7 +103,7 @@ var hisTime = -1;
 var airPressure = 1013;    // current air pressure (hPa)
 var active = -1;    // current control state (-1=don't know, 0=inactive, 1=active)
 
-var gradient=ctxs[0].createLinearGradient(0,by,0,scly+by);
+var gradient=ctxs[kCanPos].createLinearGradient(0,by,0,scly+by);
 gradient.addColorStop(0,   "#ff0000");
 gradient.addColorStop(0.3, "#ffff00");
 gradient.addColorStop(0.35,"#ffff00");
@@ -144,6 +150,22 @@ function Activate(on)
     }
 }
 
+// draw all motor speeds (canvas kCanSpd)
+function DrawSpeeds(vals)
+{
+    var ctx = ctxs[kCanSpd];
+    ctx.clearRect(0, 0, cx[kCanSpd], cy[kCanSpd]);
+    ctx.fillStyle="#444444";
+    ctx.font="16px verdana";
+    ctx.textAlign="center";
+    ctx.textBaseline="middle";
+    ctx.fillText("Motor speeds (steps/sec)", cx[kCanSpd]/2, 20);
+    ctx.textAlign="left";
+    for (var i=0; i<3; ++i) {
+        DrawSpeed(3, 75 + sep * i, vals ? vals[i] : null);
+    }
+}
+
 // draw a motor speed indicator
 function DrawSpeed(cnum, x, val)
 {
@@ -172,49 +194,33 @@ function DrawSpeed(cnum, x, val)
     ctx.fillText(val, x, y);
 }
 
-// draw all motor speeds (canvas 3)
-function DrawSpeeds(vals)
-{
-    var ctx = ctxs[3];
-    ctx.clearRect(0, 0, cx[3], cy[3]);
-    ctx.fillStyle="#444444";
-    ctx.font="16px verdana";
-    ctx.textAlign="center";
-    ctx.textBaseline="middle";
-    ctx.fillText("Motor speeds (steps/sec)", cx[3]/2, 20);
-    ctx.textAlign="left";
-    for (var i=0; i<3; ++i) {
-        DrawSpeed(3, 75 + sep * i, vals ? vals[i] : null);
-    }
-}
-
-// draw damper position indicators (canvas 0)
+// draw damper position indicators (canvas kCanPos)
 function DrawDamperPositions(vals)
 {
-    var ctx = ctxs[0];
-    ctx.clearRect(0, 0, cx[0], cy[0]);
+    var ctx = ctxs[kCanPos];
+    ctx.clearRect(0, 0, cx[kCanPos], cy[kCanPos]);
     // draw y-axis label
     ctx.fillStyle="#444444";
     ctx.font="16px verdana";
     ctx.textBaseline="middle";
     ctx.textAlign="center";
-    ctx.fillText("Damper positions (mm)", cx[0]/2, cy[0]-20);
+    ctx.fillText("Damper positions (mm)", cx[kCanPos]/2, cy[kCanPos]-20);
     DrawIndicators(0, vals, 0, 2, nom, tol, .1, .5, 1);
 }
 
-// draw damper load indicators (canvas 2)
+// draw damper load indicators (canvas kCanLod)
 function DrawDamperLoads(vals)
 {
-    var ctx = ctxs[2];
+    var ctx = ctxs[kCanLod];
     var dl = (airPressure - 1013) * 10; // TEST
 
-    ctx.clearRect(0, 0, cx[2], cy[2]);
+    ctx.clearRect(0, 0, cx[kCanLod], cy[kCanLod]);
     // draw y-axis label
     ctx.fillStyle="#444444";
     ctx.font="16px verdana";
     ctx.textBaseline="middle";
     ctx.textAlign="center";
-    ctx.fillText("Add weights (kg)", cx[2]/2, cy[2]-20);
+    ctx.fillText("Add weights (kg)", cx[kCanLod]/2, cy[kCanLod]-20);
     if (vals) {
         for (var i=0; i<3; ++i) {
             vals[i] = loadNom - (Number(vals[i]) - dl);
@@ -235,13 +241,13 @@ function DrawIndicators(cnum, vals, min, rng, nom, tol, tick, lbl, dec)
     ctx.lineWidth=1;
     ctx.beginPath();
     ctx.moveTo(0, by);
-    ctx.lineTo(cx[0], by);
+    ctx.lineTo(cx[cnum], by);
     ctx.moveTo(0, by + (1 - (nom - tol) / rng) * scly);
-    ctx.lineTo(cx[0], by + (1 - (nom - tol) / rng) * scly);
+    ctx.lineTo(cx[cnum], by + (1 - (nom - tol) / rng) * scly);
     ctx.moveTo(0, by + (1 - (nom + tol) / rng) * scly);
-    ctx.lineTo(cx[0], by + (1 - (nom + tol) / rng) * scly);
+    ctx.lineTo(cx[cnum], by + (1 - (nom + tol) / rng) * scly);
     ctx.moveTo(0, by + scly);
-    ctx.lineTo(cx[0], by + scly);
+    ctx.lineTo(cx[cnum], by + scly);
     ctx.stroke();
     for (i=0; i<3; ++i) {
         // draw damper label ("A","B" or "C")
@@ -320,11 +326,11 @@ function DrawScale(cnum, x, min, rng, tick, lbl, dec)
     ctx.stroke();
 }
 
-// draw position history (canvas 1)
+// draw position history (canvas kCanHis)
 function DrawPositionHistory()
 {
-    var ctx = ctxs[1];
-    ctx.clearRect(0, 0, cx[1], cy[1]);
+    var ctx = ctxs[kCanHis];
+    ctx.clearRect(0, 0, cx[kCanHis], cy[kCanHis]);
     ctx.strokeStyle="#d3d3d3";
     ctx.lineWidth=1;
     ctx.beginPath();
