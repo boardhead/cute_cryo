@@ -117,9 +117,7 @@ To burn new code:
 4) Press EVK1101 RST button while holding down joystick button
 5) Open DOS window on PC
 6) Change to directory "c:\Documents and Settings\Phil\My Documents\workspace"
-7) Type the following command:
-    batchisp -hardware usb -device at32uc3b0256 -operation erase f loadbuffer \
-     "cute_avr32.elf" program verify start reset 0
+7) Type the following command: "burn cute_avr32"
 
 burn.bat
 --------
