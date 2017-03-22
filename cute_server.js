@@ -1,10 +1,16 @@
 //-----------------------------------------------------------------------------
-// 1. try just "npm install usb"
-// 2. if that doesn't work, try this:
-//      git clone --recursive https://github.com/nonolith/node-usb.git
-//      cd node-usb
-//      npm install pug
-//      npm install
+//
+// File:        cute_server.js
+//
+// Description: CUTE cryostat position control hardware interface
+//
+// Revisions:   2017-03-16 - P. Harvey created
+//
+// Syntax:      node cute_server.js
+//
+// Notes:       Requires additional node libraries to run.  Install them
+//              by typing: "npm install usb"
+//
 const kAtmel   = 0x03eb;
 const kEVK1101 = 0x2300;
 const kHistoryLen = 600;
