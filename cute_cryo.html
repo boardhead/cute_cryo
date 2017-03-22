@@ -1,0 +1,525 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN"
+        "http://www.w3.org/TR/html4/loose.dtd">
+<!--
+** File:        cute_cryo.html
+**
+** Description: CUTE cryostat position control web client
+**
+** Revisions:   2017-03-08 - P. Harvey created
+-->
+<html>
+<head>
+<meta http-equiv="content-type" content="text/html; charset=utf-8">
+<title>CUTE Cryostat Position Control</title>
+</head>
+<body>
+<style type="text/css">
+<!--
+div.lg  { font:14px verdana; border:1px solid #d3d3d3; padding:3px 6px 3px 6px;
+          width:668px; line-height:1.2em; overflow:auto }
+.brd    { border:1px solid #d3d3d3; }
+.no     { border:0; margin:0; padding:0 }
+.ca     { font:16px verdana; color:#444444; border:1px solid #d3d3d3; width:340px; height:70px; }
+.tl     { padding: 8px 15px 5px 5px }
+.tr     { padding: 8px 5px 5px 10px }
+.tl2    { padding: 1px 15px 5px 5px }
+.tr2    { padding: 1px 5px 5px 10px }
+</style>
+
+<table class=no><tr><td colspan=2><div id="title" class=lg>
+<center><h3 style='margin:.5em'>CUTE Cyrostat Position Control <span id="onOff"></span></h3></center>
+</div></td></tr>
+
+<tr><td><canvas id="can3" class=brd width="334" height="70"></canvas></td>
+<td><div class="ca">
+<form action="/action_page.php" method="get" id="form1">
+<table width="100%">
+<tr><td class=tl align="right">Active Control:</td><td class=tr>
+  <input type="radio" name="active" id="act1" value="1" onclick="Activate(1)"> On &nbsp; &nbsp;
+  <input type="radio" name="active" id="act0" value="0" onclick="Activate(0)"> Off
+</td></tr>
+<tr><td class=tl2 align="right" width="50%">Air Pressure:</td>
+<td class=tr2><span id="air">1013</span> hPa</td></tr>
+</table>
+</form>
+</div></td>
+</tr>
+
+<tr>
+<td><canvas id="can0" class=brd width="334" height="250"></canvas></td>
+<td><canvas id="can2" class=brd width="340" height="250"></canvas></td>
+</tr>
+
+<tr><td colspan=2>
+<canvas id="can1" class=brd width="680" height="260">
+Your browser does not support the HTML5 canvas tag.</canvas></td></tr>
+
+<tr><td colspan=2>
+<div id="log" class="lg brd" style="height:12em;">
+</td></tr></table>
+</div>
+
+<script type="text/javascript">
+const kHistoryLen = 600;
+
+// CUTE parameters
+var max = 2;        // max height in mm
+var min = 0;        // min height in mm
+var nom = 1;        // nominal height in mm
+var tol = 0.1;      // tolerance in mm
+var rng = max - min;
+
+var loadMin = 0;    // minimum load (kg)
+var loadMax = 50;   // maximum load (kg)
+var loadNom = 25;   // nominal load (kg);
+var loadTol = 2.5;  // load tolerance (kg)
+var loadRng = loadMax - loadMin;
+
+var cans = [];      // our drawing canvases
+var ctxs = [];      // our graphics contexts
+var cx = [];        // canvas widths
+var cy = [];        // canvas heights
+for (var i=0; i<4; ++i) {
+    cans[i] = document.getElementById('can'+i);
+    ctxs[i] = cans[i].getContext('2d');
+    ScaleCanvas(i);
+}
+
+// drawing constants
+var bx = 50;    // left margin
+var by = 35;    // top margin
+var sep = 100;  // separation between scales
+var scly = cy[0] - by - 40;   // scale height
+var numTicks = 20;
+
+var his = [ ];  // NOTE: don't call this "history" -- doesn't work in Firefox
+var hisTime = -1;
+var airPressure = 1013;    // current air pressure (hPa)
+var active = -1;    // current control state (-1=don't know, 0=inactive, 1=active)
+
+var gradient=ctxs[0].createLinearGradient(0,by,0,scly+by);
+gradient.addColorStop(0,   "#ff0000");
+gradient.addColorStop(0.3, "#ffff00");
+gradient.addColorStop(0.35,"#ffff00");
+gradient.addColorStop(0.5, "#00dd00");
+gradient.addColorStop(0.65,"#44ffff");
+gradient.addColorStop(0.7, "#44ffff");
+gradient.addColorStop(1.0, "#0000ff");
+
+var damperLbl = ["A","B","C"];
+var damperCol = ["#dd0000","#00aa00","#0000ff"];
+var needDrawHis = 1;
+var cuteServer;
+
+// scale canvas to draw at full device resolution
+function ScaleCanvas(cnum)
+{
+    var can = cans[cnum];
+    var rect = can.getBoundingClientRect();
+    cx[cnum] = can.width;
+    cy[cnum] = can.height;
+    can.style.height = can.height + 'px';
+    can.style.width  = can.width + 'px';
+    // (minus 2 for border thickness)
+    can.width  = Math.round(devicePixelRatio * rect.right) -
+                 Math.round(devicePixelRatio * rect.left) - 2;
+    can.height = Math.round(devicePixelRatio * rect.bottom) -
+                 Math.round(devicePixelRatio * rect.top) - 2;
+    ctxs[cnum].scale(can.width/cx[cnum], can.height/cy[cnum]);
+}
+
+function Activate(on)
+{
+    // reset radio buttons to reflect hardware state
+    act0.checked = (active == 0);
+    act1.checked = (active == 1);
+    onOff.innerHTML = active == 1 ? "(On)" : "(Off)";
+
+    if (active != on) {
+        if (on == "1") {
+            cuteServer.send("On");
+        } else if (window.confirm("Turn off position control?\n\nARE YOU SURE?")) {
+            cuteServer.send("Off");
+        }
+    }
+}
+
+// draw a motor speed indicator
+function DrawSpeed(cnum, x, val)
+{
+    var ctx = ctxs[cnum];
+    var y = 48;
+    ctx.beginPath();
+    if (!val) {
+        ctx.strokeRect(x-29, y-9, 18, 18);
+        if (val == null) return;
+    } else {
+        if (val < 0) {
+            ctx.moveTo(x-29, y-9+1);
+            ctx.lineTo(x-20, y+9+1);
+            ctx.lineTo(x-11, y-9+1);
+        } else {
+            ctx.moveTo(x-29, y+9-1);
+            ctx.lineTo(x-20, y-9-1);
+            ctx.lineTo(x-11, y+9-1);
+        }
+        ctx.closePath();
+        ctx.stroke();
+        ctx.fillStyle = "#ff0000";
+        ctx.fill();
+    }
+    ctx.fillStyle="#444444";
+    ctx.fillText(val, x, y);
+}
+
+// draw all motor speeds (canvas 3)
+function DrawSpeeds(vals)
+{
+    var ctx = ctxs[3];
+    ctx.clearRect(0, 0, cx[3], cy[3]);
+    ctx.fillStyle="#444444";
+    ctx.font="16px verdana";
+    ctx.textAlign="center";
+    ctx.textBaseline="middle";
+    ctx.fillText("Motor speeds (steps/sec)", cx[3]/2, 20);
+    ctx.textAlign="left";
+    for (var i=0; i<3; ++i) {
+        DrawSpeed(3, 75 + sep * i, vals ? vals[i] : null);
+    }
+}
+
+// draw damper position indicators (canvas 0)
+function DrawDamperPositions(vals)
+{
+    var ctx = ctxs[0];
+    ctx.clearRect(0, 0, cx[0], cy[0]);
+    // draw y-axis label
+    ctx.fillStyle="#444444";
+    ctx.font="16px verdana";
+    ctx.textBaseline="middle";
+    ctx.textAlign="center";
+    ctx.fillText("Damper positions (mm)", cx[0]/2, cy[0]-20);
+    DrawIndicators(0, vals, 0, 2, nom, tol, .1, .5, 1);
+}
+
+// draw damper load indicators (canvas 2)
+function DrawDamperLoads(vals)
+{
+    var ctx = ctxs[2];
+    var dl = (airPressure - 1013) * 10; // TEST
+
+    ctx.clearRect(0, 0, cx[2], cy[2]);
+    // draw y-axis label
+    ctx.fillStyle="#444444";
+    ctx.font="16px verdana";
+    ctx.textBaseline="middle";
+    ctx.textAlign="center";
+    ctx.fillText("Add weights (kg)", cx[2]/2, cy[2]-20);
+    if (vals) {
+        for (var i=0; i<3; ++i) {
+            vals[i] = loadNom - (Number(vals[i]) - dl);
+        }
+    }
+    DrawIndicators(2, vals, -loadNom, loadNom*2, loadNom, loadTol, 2, 10, 0);
+}
+
+// draw all 3 position/load indicators
+// Inputs: cnum=canvas number, vals=load value array, min=scale minimum
+//         rng=scale range, nom=nominal value, tick=tick spacing,
+//         lbl=label spacing, dec=decimal digits
+function DrawIndicators(cnum, vals, min, rng, nom, tol, tick, lbl, dec)
+{
+    var ctx = ctxs[cnum];
+    // draw horizontal guide lines
+    ctx.strokeStyle="#d3d3d3";
+    ctx.lineWidth=1;
+    ctx.beginPath();
+    ctx.moveTo(0, by);
+    ctx.lineTo(cx[0], by);
+    ctx.moveTo(0, by + (1 - (nom - tol) / rng) * scly);
+    ctx.lineTo(cx[0], by + (1 - (nom - tol) / rng) * scly);
+    ctx.moveTo(0, by + (1 - (nom + tol) / rng) * scly);
+    ctx.lineTo(cx[0], by + (1 - (nom + tol) / rng) * scly);
+    ctx.moveTo(0, by + scly);
+    ctx.lineTo(cx[0], by + scly);
+    ctx.stroke();
+    for (i=0; i<3; ++i) {
+        // draw damper label ("A","B" or "C")
+        ctx.font="16px verdana";
+        ctx.textAlign="left";
+        ctx.fillStyle="#000000";
+        ctx.fillText(damperLbl[i], bx+sep*i, by*.6);
+        DrawScale(cnum, bx + sep * i, min, rng, tick, lbl, dec);
+        if (vals) {
+            // draw color bar
+            ctx.fillStyle=gradient;
+            ctx.fillRect(bx+sep*i,by,10,scly);
+        }
+        ctx.lineWidth=.5;
+        ctx.strokeStyle="#000000";
+        ctx.strokeRect(bx+sep*i,by,10,scly);
+        if (!vals) continue;
+        // draw triangle indicator
+        ctx.fillStyle=gradient;
+        var val = Number(vals[i]);
+        var f = val - min;
+        if (f < 0) f = 0;
+        else if (f > rng) f = rng;
+        var y = Math.round((1 - f/rng) * scly + by);
+        ctx.beginPath();
+        ctx.moveTo(bx+10+sep*i,y);
+        ctx.lineTo(bx+20+sep*i,y+6);
+        ctx.lineTo(bx+20+sep*i,y-6);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        // draw indicator text
+        ctx.font="16px verdana";
+        ctx.textAlign="left";
+        var t = val - nom - min;
+        if (t > tol) {
+            ctx.fillStyle="#ff0000";
+        } else if (t < -tol) {
+            ctx.fillStyle="#0000ff";
+        } else {
+            ctx.fillStyle="#008800";
+        }
+        ctx.fillText(val.toFixed(dec+1), bx+24+sep*i, y);
+    }
+}
+
+// Draw vertical scale
+// Inputs: cnum=canvas number, x=x pixel position, min=scale minimum
+//         rng=scale range, tick=tick spacing, lbl=label spacing
+//         dec=decimal digits
+function DrawScale(cnum, x, min, rng, tick, lbl, dec)
+{
+    var ctx = ctxs[cnum];
+    // draw scale
+    ctx.strokeStyle="#000000";
+    ctx.lineWidth=.5;
+    ctx.fillStyle="#444444";
+    ctx.font="12px verdana";
+    ctx.textAlign="right";
+    ctx.textBaseline="middle";
+    var tol = (rng / scly) / 2.00001; // 1/2 pixel tolerance
+    var y0 = Math.floor((min - tol)/tick) * tick;
+    if (y0 < min - tol) y0 += tick;
+    var top = min + rng + tol;
+    ctx.beginPath();
+    for (var y=y0; y<=top; y+=tick) {
+        var pix = Math.round(by + (1 - (y - min) / rng) * scly);
+        if (Math.abs(Math.round(y / lbl) * lbl - y) < tol) {
+            ctx.moveTo(x-6, pix);
+            ctx.fillText(y.toFixed(dec), x-8, pix);
+        } else {
+            ctx.moveTo(x-3, pix);
+        }
+        ctx.lineTo(x, pix);        
+    }
+    ctx.stroke();
+}
+
+// draw position history (canvas 1)
+function DrawPositionHistory()
+{
+    var ctx = ctxs[1];
+    ctx.clearRect(0, 0, cx[1], cy[1]);
+    ctx.strokeStyle="#d3d3d3";
+    ctx.lineWidth=1;
+    ctx.beginPath();
+    ctx.moveTo(bx, by + (1 - (nom - tol) / rng) * scly);
+    ctx.lineTo(bx + kHistoryLen, by + (1 - (nom - tol) / rng) * scly);
+    ctx.moveTo(bx, by + (1 - (nom + tol) / rng) * scly);
+    ctx.lineTo(bx + kHistoryLen, by + (1 - (nom + tol) / rng) * scly);
+    for (var i=0; i<=kHistoryLen; i+=60) {
+        ctx.moveTo(bx + i, by);
+        ctx.lineTo(bx + i, by + scly);
+    }
+    ctx.stroke();
+    ctx.strokeStyle = '#000000';
+    ctx.strokeRect(bx, by, kHistoryLen, scly);
+    DrawScale(1, bx, 0, 2, .1, .5, 1);
+    // draw horizontal scale
+    ctx.textAlign="center";
+    ctx.textBaseline="top";
+    ctx.beginPath();
+    for (var i=0; i<=kHistoryLen; i+=10) {
+        ctx.moveTo(bx + i, by + scly);
+        var len;
+        if (!(i % 60)) {
+            ctx.fillText(i/60, bx + i, by + scly + 6);
+            len = 6;
+        } else if (!(i % 30)) {
+            len = 5;
+        } else {
+            len = 3;
+        }
+        ctx.lineTo(bx + i, by + scly + len);
+    }
+    ctx.stroke();
+    // draw title/legend
+    ctx.lineWidth=1;
+    ctx.font="16px verdana";
+    ctx.textAlign="right";
+    ctx.textBaseline="alphabetic";
+    ctx.fillStyle="#444444";
+    ctx.fillText("Damper position history:", bx + kHistoryLen/2, 23);
+    for (var i=0; i<3; ++i) {
+        ctx.beginPath();
+        var x = bx + kHistoryLen/2 + (i + 1) * 60;
+        ctx.moveTo(x, 18);
+        ctx.lineTo(x + 20, 18);
+        ctx.strokeStyle = damperCol[i];
+        ctx.stroke();
+        ctx.fillText(damperLbl[i], x - 5, 23);
+    }
+    ctx.textAlign="center";
+    ctx.fillText("Past time (min)", bx + kHistoryLen/2, by + scly + 35);
+    if (!his.length) return;
+    for (var i=0; i<3; ++i) {
+        var lasty = null;
+        ctx.beginPath();
+        // (start drawing at history element 1 because 0 may not be final)
+        for (var j=1; j<his.length; ++j) {
+            if (typeof his[j][i] == 'undefined') continue;
+            var y = Math.round((1 - (his[j][i]-min)/rng) * scly + by);
+            if (lasty == null) {
+                ctx.moveTo(bx+j, y);
+            } else {
+                ctx.lineTo(bx+j, lasty);
+                ctx.lineTo(bx+j, y);
+            }
+            lasty = y;
+        }
+        ctx.strokeStyle = damperCol[i];
+        ctx.stroke();
+    }
+    needDrawHis = 0;
+}
+
+// clear all canvases
+function ClearAll()
+{
+    DrawDamperPositions();
+    DrawPositionHistory();
+    DrawDamperLoads();
+    DrawSpeeds();
+}
+
+// connect to and communicate with CUTE cryostat server
+function ConnectToServer()
+{
+    if (cuteServer) return;
+    try {
+        var host = window.location.hostname;
+        var port = 8080;
+        if (host == "") host = "localhost";
+        console.log(host+":"+port);
+        var ws = new WebSocket("ws://"+host+":"+port, ["cute", "test"]);
+        cuteServer = ws;
+        ws.onopen = function() {
+            if (ws != cuteServer) {
+                ws.close();
+                return;
+            }
+
+            // handle messages from server
+            ws.onmessage = function(message) {
+                if (ws != cuteServer) {
+                    ws.close();
+                    return;
+                }
+                var c = message.data.substr(0,1);
+                var msg = message.data.substr(2);
+                switch (c) {
+                    case 'A': { // damper positions
+                        var v = msg.split(' ');
+                        var t = Number(v.shift());
+                        DrawDamperPositions(v);
+                        // add to history
+                        if (t != hisTime) {
+                            if (hisTime < 0) {
+                                hisTime = t - 1;
+                            }
+                            while (hisTime != t) {
+                                hisTime = (hisTime + 1) % kHistoryLen;
+                                his.unshift([]);
+                            }
+                            if (his.length > kHistoryLen) {
+                                his.splice(kHistoryLen, his.length - kHistoryLen);
+                            }
+                            needDrawHis = 1;  // redraw the history plot
+                        }
+                        // store these measurements in the history
+                        for (var i=0; i<v.length; ++i) {
+                            his[0][i] = v[i];
+                        }
+                        // draw history plot if necessary
+                        if (needDrawHis) DrawPositionHistory();
+                        airPressure = 1003 + 10 * v[3];
+                        air.innerHTML = airPressure.toFixed(1);
+                        DrawDamperLoads([25, 25, 25]);
+                    } break;
+    
+                    case 'B': { // history
+                        v = msg.split(' ');
+                        hisTime = Number(v.shift());
+                        his.unshift(v);
+                    } break;
+                    
+                    case 'C':   // console log
+                        var log = document.getElementById('log');
+                        var lines = log.innerHTML.split('\n');
+                        if (lines.length > 200) lines.shift();
+                        lines.push(msg);
+                        log.innerHTML = lines.join('\n');
+                        log.scrollTop = log.scrollHeight;
+                        break;
+    
+                    case 'D': { // system active/inactive
+                        active = msg;
+                        title.style.backgroundColor = (msg == 1 ? '#ccffcc' : '#ffcccc');
+                        Activate(active);   // update radio buttons
+                        DrawSpeeds(active==1 ? [100,0,-40] : [0,0,0]); //TEST
+                            
+                    } break;
+                }
+            };
+        };
+        ws.onclose = function(event) {
+            if (ws == cuteServer) {
+                if (cuteServer) ClearAll();
+                cuteServer = null;
+                setTimeout(ConnectToServer, 1000);  // try to reconnect again later
+            }
+        };
+        ws.onerror = function() {
+            ws.close();
+            if (ws == cuteServer) {
+                ClearAll();
+                cuteServer = null;
+                setTimeout(ConnectToServer, 1000);  // try to reconnect again later
+            }
+        };
+    }
+    catch (err) {
+        if (err && ws == cuteServer) {
+            ClearAll();
+            cuteServer = null;
+            setTimeout(ConnectToServer, 1000);  // try to reconnect again later
+        }
+    }
+}
+
+//-----------------------------------------------------------------------------
+// main script
+ClearAll();
+
+ConnectToServer();
+
+</script>
+
+</body>
+</html>
+
