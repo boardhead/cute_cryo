@@ -162,7 +162,7 @@ function DrawSpeeds(vals)
     ctx.fillText("Motor speeds (steps/sec)", cx[kCanSpd]/2, 20);
     ctx.textAlign="left";
     for (var i=0; i<3; ++i) {
-        DrawSpeed(3, 75 + sep * i, vals ? vals[i] : null);
+        DrawSpeed(kCanSpd, 75 + sep * i, vals ? vals[i] : null);
     }
 }
 
@@ -205,7 +205,7 @@ function DrawDamperPositions(vals)
     ctx.textBaseline="middle";
     ctx.textAlign="center";
     ctx.fillText("Damper positions (mm)", cx[kCanPos]/2, cy[kCanPos]-20);
-    DrawIndicators(0, vals, 0, 2, nom, tol, .1, .5, 1);
+    DrawIndicators(kCanPos, vals, 0, 2, nom, tol, .1, .5, 1);
 }
 
 // draw damper load indicators (canvas kCanLod)
@@ -226,7 +226,7 @@ function DrawDamperLoads(vals)
             vals[i] = loadNom - (Number(vals[i]) - dl);
         }
     }
-    DrawIndicators(2, vals, -loadNom, loadNom*2, loadNom, loadTol, 2, 10, 0);
+    DrawIndicators(kCanLod, vals, -loadNom, loadNom*2, loadNom, loadTol, 2, 10, 0);
 }
 
 // draw all 3 position/load indicators
@@ -345,7 +345,7 @@ function DrawPositionHistory()
     ctx.stroke();
     ctx.strokeStyle = '#000000';
     ctx.strokeRect(bx, by, kHistoryLen, scly);
-    DrawScale(1, bx, 0, 2, .1, .5, 1);
+    DrawScale(kCanHis, bx, 0, 2, .1, .5, 1);
     // draw horizontal scale
     ctx.textAlign="center";
     ctx.textBaseline="top";
@@ -413,10 +413,21 @@ function ClearAll()
     DrawSpeeds();
 }
 
+// forget about server after disconnect, then try to reconnect again
+function ForgetServer(ws)
+{
+    if (ws == cuteServer) {
+        ClearAll();     // clear all indicators
+        cuteServer = null;
+        setTimeout(ConnectToServer, 1000);  // try to reconnect again later
+    }
+}
+
 // connect to and communicate with CUTE cryostat server
 function ConnectToServer()
 {
-    if (cuteServer) return;
+    if (cuteServer) return; // allow only one server object
+
     try {
         var host = window.location.hostname;
         var port = 8080;
@@ -494,27 +505,15 @@ function ConnectToServer()
             };
         };
         ws.onclose = function(event) {
-            if (ws == cuteServer) {
-                if (cuteServer) ClearAll();
-                cuteServer = null;
-                setTimeout(ConnectToServer, 1000);  // try to reconnect again later
-            }
+            ForgetServer(ws);
         };
         ws.onerror = function() {
             ws.close();
-            if (ws == cuteServer) {
-                ClearAll();
-                cuteServer = null;
-                setTimeout(ConnectToServer, 1000);  // try to reconnect again later
-            }
+            ForgetServer(ws);
         };
     }
     catch (err) {
-        if (err && ws == cuteServer) {
-            ClearAll();
-            cuteServer = null;
-            setTimeout(ConnectToServer, 1000);  // try to reconnect again later
-        }
+        if (err) ForgetServer(ws);
     }
 }
 
