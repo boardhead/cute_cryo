@@ -185,7 +185,7 @@ intrvl = setInterval(function() {
             Send(i, "d.adc2;d.adc3\n");
         } else {
             // re-send "ser" command in case it was missed
-            Send(i, "a.ser;b.ver\n");
+            Send(i, "a.ser;b.ver;c.wdt 1\n");
         }
     }
 }, 100);
@@ -240,7 +240,7 @@ function OpenEVK(device)
             inpt[i].startPoll(4, 1024);
             inpt[i].on('data', HandleData);
             inpt[i].on('error', HandleError);
-            Send(i, "a.ser;b.ver\n");
+            Send(i, "a.ser;b.ver;c.wdt 1\n");
             break;
         }
     }
