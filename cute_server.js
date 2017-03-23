@@ -185,7 +185,7 @@ intrvl = setInterval(function() {
             Send(i, "d.adc2;d.adc3\n");
         } else {
             // re-send "ser" command in case it was missed
-            Send(i, "a.ser;b.ver;c.pa31 -\n");
+            Send(i, "a.ser;b.ver\n");
         }
     }
 }, 100);
@@ -240,7 +240,7 @@ function OpenEVK(device)
             inpt[i].startPoll(4, 1024);
             inpt[i].on('data', HandleData);
             inpt[i].on('error', HandleError);
-            Send(i, "a.ser;b.ver;c.pa31 -\n");
+            Send(i, "a.ser;b.ver\n");
             break;
         }
     }
@@ -269,6 +269,7 @@ function Send(evkNum, cmd)
 {
     outpt[evkNum].transfer(cmd, function(error) {
         if (error) {
+            Log('EVK', evkNum, 'send error');
             ForgetEVK(this);
         }
     });
@@ -306,7 +307,10 @@ function HandleData(data)
         var str = lines[j];
         if (!str.length) continue;
         if (str.length < 4 || (str.substr(1,1) != '.') || str.substr(2,2) != 'OK') {
-            Log('EVK', evkNum, 'Command error:', str);
+            // (we sometimes get truncated responses from the first couple of commands
+            // sent to the EVK, but these don't cause problems, so don't print this
+            // this error for now)
+            // Log('EVK', evkNum, 'Command error:', str);
         } else {
             var msg = str.length > 5 ? str.substr(5) : '';
             var id = str.substr(0,1);
