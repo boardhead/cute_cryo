@@ -57,9 +57,15 @@ div.lg  { font:14px verdana; border:1px solid #d3d3d3; padding:3px 6px 3px 6px;
 Your browser does not support the HTML5 canvas tag.</canvas></td></tr>
 
 <tr><td colspan=2>
-<div id="log" class="lg brd" style="height:12em;">
-</td></tr></table>
-</div>
+<div id="log" class="lg brd" style="height:12em;"></div>
+</td></tr>
+
+<tr><td colspan=2>
+<div id="typ" class="lg brd" style="height:2em;">Comment:
+<input type="text" id="com" size="75" style="font:14px verdana" onkeypress="Comment(event)"></div>
+</td></tr>
+
+</table>
 
 <script type="text/javascript">
 const kHistoryLen = 600;
@@ -136,6 +142,19 @@ function ScaleCanvas(cnum)
     ctxs[cnum].scale(can.width/cx[cnum], can.height/cy[cnum]);
 }
 
+function Comment(event)
+{
+    if (event.which == 13) {
+        Send('Log:"'+com.value+'"');
+        com.value = "";
+    }
+}
+
+function Send(cmd)
+{
+    if (cuteServer) cuteServer.send(cmd);
+}
+
 // Activate/deactivate position control
 function Activate(on)
 {
@@ -146,9 +165,9 @@ function Activate(on)
 
     if (active != on) {
         if (on == "1") {
-            cuteServer.send("On");
+            Send("On");
         } else if (window.confirm("Turn off position control?\n\nARE YOU SURE?")) {
-            cuteServer.send("Off");
+            Send("Off");
         }
     }
 }

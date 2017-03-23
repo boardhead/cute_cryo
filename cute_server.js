@@ -41,6 +41,10 @@ var foundEVKs = 0;      // number of recognized EVKs
 var conn = [];          // http client connections
 var active = 0;
 
+var flashPin = ['pa07','pa08','pa21','pa08'];
+var flashNum = flashPin.length - 1;
+var flashTime = 0;
+
 // each element of the history array is an array with the following elements:
 // 0-2) damper heights
 // 3-5) damper forces
@@ -113,7 +117,7 @@ wsServer.on('request', function(request) {
             } else {
                 str = 'Received unknown message type=' + message.type;;
             }
-            Log(str);
+            Log("["+addr+"] "+str);
         });
 
         conn[conn.length] = connection;
@@ -182,10 +186,10 @@ intrvl = setInterval(function() {
     for (var i=0; i<inpt.length; ++i) {
         if (inpt[i] == null) continue;
         if (i < 2) {
-            Send(i, "d.adc2;d.adc3\n");
+            SendToEVK(i, "d.adc2;d.adc3\n");
         } else {
             // re-send "ser" command in case it was missed
-            Send(i, "a.ser;b.ver;c.wdt 1\n");
+            SendToEVK(i, "a.ser;b.ver;c.wdt 1\n");
         }
     }
 }, 100);
@@ -202,7 +206,7 @@ function GetAddr(sock)
 
 //-----------------------------------------------------------------------------
 // Send data to all http clients
-function SendAll(str)
+function SendToClients(str)
 {
     for (var i=0; i<conn.length; ++i) {
         conn[i].send(str, function ack(error) { });
@@ -215,7 +219,7 @@ function Activate(on, addr)
 {
     if (active != on) {
         active = on;
-        SendAll('D ' + on);
+        SendToClients('D ' + on);
         Log('[' + addr + '] Position control ' + (active==1 ? 'activated' : 'deactivated'));
     }
 }
@@ -240,7 +244,7 @@ function OpenEVK(device)
             inpt[i].startPoll(4, 1024);
             inpt[i].on('data', HandleData);
             inpt[i].on('error', HandleError);
-            Send(i, "a.ser;b.ver;c.wdt 1\n");
+            SendToEVK(i, "a.ser;b.ver;c.wdt 1\n");
             break;
         }
     }
@@ -265,7 +269,7 @@ function ForgetEVK(deviceOrEndpoint)
 
 //-----------------------------------------------------------------------------
 // Send command to an EVK
-function Send(evkNum, cmd)
+function SendToEVK(evkNum, cmd)
 {
     outpt[evkNum].transfer(cmd, function(error) {
         if (error) {
@@ -384,19 +388,19 @@ function HandleResponse(evkNum, responseID, msg)
             }
             if (!evk) {
                 evk = 'Unknown EVK';
-                Send(evkNum, 'z.wdt 0\n');  // disable watchdog on unknown EVK
+                SendToEVK(evkNum, 'z.wdt 0\n');  // disable watchdog on unknown EVK
             }
             Log(evk, 'attached (s/n', msg + ')');
             break;
 
-        case 'b':   // b = ver
+        case 'b':   // b = log this response
             Log('EVK', evkNum, msg);
             break;
 
-        case 'c':   // c = nop
+        case 'c':   // c = ignore this response
             break;
 
-        case 'd':   // d = adc2 command
+        case 'd':   // d = handle ADC read responses
             var j = msg.indexOf('VAL=');
             if (j >= 0) {
                 // ie. "adc2 512"
@@ -410,11 +414,22 @@ function HandleResponse(evkNum, responseID, msg)
                         // after reading last adc from EVK 1
                         if (evkNum) {
                             var t = AddToHistory(0, vals);
-                            SendAll('A '+ (t % kHistoryLen)+' '+
-                                         vals[0].toFixed(4)+' '+
-                                         vals[1].toFixed(4)+' '+
-                                         vals[2].toFixed(4)+' '+
-                                         vals[3].toFixed(4));
+                            SendToClients('A '+ (t % kHistoryLen)+' '+
+                                vals[0].toFixed(4)+' '+
+                                vals[1].toFixed(4)+' '+
+                                vals[2].toFixed(4)+' '+
+                                vals[3].toFixed(4));
+                            // flash some LED's for the fun of it
+                            if (t != flashTime) {
+                                var flashNew = (flashNum + 1) % flashPin.length;
+                                var cmd = "c."+flashPin[flashNum]+" 1;c."+
+                                               flashPin[flashNew]+" 0\n";
+                                for (var i=0; i<2; ++i) {
+                                    if (outpt[i]) SendToEVK(i, cmd);
+                                }
+                                flashNum = flashNew;
+                                flashTime = t;
+                            }
                         }
                         break;
                 }
@@ -455,6 +470,18 @@ function FindEVKs()
 }
 
 //-----------------------------------------------------------------------------
+// Escape string for HTML
+function EscapeHTML(str)
+{
+    var entityMap = {
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+    };
+    return str.replace(/[&<>]/g, function (s) { return entityMap[s]; });
+}
+
+//-----------------------------------------------------------------------------
 // Log message to console and file
 function Log()
 {
@@ -472,7 +499,7 @@ function Log()
         if (error) console.log(error, 'writing log file');
     });
     // send back to clients
-    SendAll('C ' +  msg + '<br/>', function ack(error) { });
+    SendToClients('C ' +  EscapeHTML(msg) + '<br/>');
 }
 
 //-----------------------------------------------------------------------------
