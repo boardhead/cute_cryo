@@ -39,6 +39,7 @@ var inpt = [];          // EVK in endpoints
 var outpt = [];         // EVK out endpoints
 var foundEVKs = 0;      // number of recognized EVKs
 var conn = [];          // http client connections
+var name = [];          // http client names
 var active = 0;
 
 var flashPin = ['pa07','pa08','pa21','pa08'];
@@ -81,31 +82,42 @@ wsServer.on('request', function(request) {
         // This is the most important callback for us, we'll handle
         // all messages from users here.
         connection.on('message', function(message) {
-            var str;
+            var str, n;
             // process WebSocket message
+            for (n=0; n<conn.length; ++n) {
+                if (conn[n] == this) break;
+            }
+            if (n >= conn.length) {
+                Log('Message from unknown client!');
+                return;
+            }
             if (message.type === 'utf8') {
                 var addr = GetAddr(this);
                 if (!authorized[addr] && !authorized['*']) {
-                    Log("["+addr+"] Client has no command authority");
+                    Log("["+name[n]+"] Client has no command authority");
                     return;
                 }
-                var n = message.utf8Data.indexOf(':');
+                var i = message.utf8Data.indexOf(':');
                 var cmd, str;
-                if (n > 0) {
-                    cmd = message.utf8Data.substr(0,n);
-                    str = message.utf8Data.substr(n+1);
+                if (i > 0) {
+                    cmd = message.utf8Data.substr(0,i);
+                    str = message.utf8Data.substr(i+1);
                 } else {
                     cmd = message.utf8Data;
                     str = '';
                 }
                 switch (cmd) {
+                    case 'Name':
+                        Log('['+name[n]+'] Name set to "'+str+'"');
+                        name[n] = str;
+                        return;
                     case 'Log':
                         break;
                     case 'On':
-                        Activate(1,addr);
+                        Activate(1,name[n]);
                         return;
                     case 'Off':
-                        Activate(0,addr);
+                        Activate(0,name[n]);
                         return;
                     default:
                         str = 'Unknown command: ' + message.utf8Data;
@@ -117,17 +129,20 @@ wsServer.on('request', function(request) {
             } else {
                 str = 'Received unknown message type=' + message.type;;
             }
-            Log("["+addr+"] "+str);
+            Log("["+name[n]+"] "+str);
         });
 
-        conn[conn.length] = connection;
-    
+        var n = conn.length;
+        name[n] = GetAddr(request);
+        conn[n] = connection;
+
         connection.on('close', function(reason) {
             // close user connection
-            Log('[' + GetAddr(this) + '] Closed connection');
             for (var i=0; i<conn.length; ++i) {
                 if (conn[i] == this) {
+                    Log('[' + name[i] + '] Closed connection');
                     conn.splice(i,1); // remove from list
+                    name.splice(i,1);
                     break;
                 }
             }
@@ -136,7 +151,7 @@ wsServer.on('request', function(request) {
         connection.send('C ---- CUTE Cryostat Position Control v' + ver + ' ----<br/>(' + foundEVKs + ' EVKs connected)<br/>',
             function ack(error) { });
 
-        Log('[' + GetAddr(request) + '] Connected');
+        Log('[' + name[n] + '] Connected');
         // send message indicating whether or not we are active
         connection.send('D ' + active, function ack(error) { });
 

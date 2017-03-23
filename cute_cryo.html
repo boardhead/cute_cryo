@@ -145,8 +145,16 @@ function ScaleCanvas(cnum)
 function Comment(event)
 {
     if (event.which == 13) {
-        Send('Log:"'+com.value+'"');
-        com.value = "";
+        var cmd = com.value.split(' ',1)[0];
+        switch (cmd) {
+            case '/name':
+                Send('Name:'+com.value.substr(cmd.length).trim());
+                break;
+            default:
+                Send('Log:"'+com.value+'"');
+                break;
+        }
+        com.value = '';
     }
 }
 
