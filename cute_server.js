@@ -402,14 +402,15 @@ function HandleResponse(evkNum, responseID, msg)
                         break;
                     case '3':
                         vals[evkNum*2+1] = msg.substr(j+4) / 545;
-                        // send data back to http clients after reading last adc from EVK 0
-                        var t = AddToHistory(0, vals);
+                        // save in history and send data back to http clients
+                        // after reading last adc from EVK 1
                         if (evkNum) {
+                            var t = AddToHistory(0, vals);
                             SendAll('A '+ (t % kHistoryLen)+' '+
-                                           vals[0].toFixed(4)+' '+
-                                           vals[1].toFixed(4)+' '+
-                                           vals[2].toFixed(4)+' '+
-                                           vals[3].toFixed(4));
+                                         vals[0].toFixed(4)+' '+
+                                         vals[1].toFixed(4)+' '+
+                                         vals[2].toFixed(4)+' '+
+                                         vals[3].toFixed(4));
                         }
                         break;
                 }

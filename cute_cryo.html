@@ -1,11 +1,13 @@
 <!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN"
         "http://www.w3.org/TR/html4/loose.dtd">
 <!--
+********************************************************************************
 ** File:        cute_cryo.html
 **
 ** Description: CUTE cryostat position control web client
 **
 ** Revisions:   2017-03-08 - P. Harvey created
+********************************************************************************
 -->
 <html>
 <head>
@@ -27,7 +29,7 @@ div.lg  { font:14px verdana; border:1px solid #d3d3d3; padding:3px 6px 3px 6px;
 </style>
 
 <table class=no><tr><td colspan=2><div id="title" class=lg>
-<center><h3 style='margin:.5em'>CUTE Cyrostat Position Control <span id="onOff"></span></h3></center>
+<center><h3 style='margin:.5em'>CUTE Cryostat Position Control <span id="onOff"></span></h3></center>
 </div></td></tr>
 
 <tr><td><canvas id="can3" class=brd width="334" height="70"></canvas></td>
@@ -162,7 +164,7 @@ function DrawSpeeds(vals)
     ctx.fillText("Motor speeds (steps/sec)", cx[kCanSpd]/2, 20);
     ctx.textAlign="left";
     for (var i=0; i<3; ++i) {
-        DrawSpeed(3, 75 + sep * i, vals ? vals[i] : null);
+        DrawSpeed(kCanSpd, 75 + sep * i, vals ? vals[i] : null);
     }
 }
 
@@ -205,7 +207,7 @@ function DrawDamperPositions(vals)
     ctx.textBaseline="middle";
     ctx.textAlign="center";
     ctx.fillText("Damper positions (mm)", cx[kCanPos]/2, cy[kCanPos]-20);
-    DrawIndicators(0, vals, 0, 2, nom, tol, .1, .5, 1);
+    DrawIndicators(kCanPos, vals, 0, 2, nom, tol, .1, .5, 1);
 }
 
 // draw damper load indicators (canvas kCanLod)
@@ -226,7 +228,7 @@ function DrawDamperLoads(vals)
             vals[i] = loadNom - (Number(vals[i]) - dl);
         }
     }
-    DrawIndicators(2, vals, -loadNom, loadNom*2, loadNom, loadTol, 2, 10, 0);
+    DrawIndicators(kCanLod, vals, -loadNom, loadNom*2, loadNom, loadTol, 2, 10, 0);
 }
 
 // draw all 3 position/load indicators
@@ -237,7 +239,7 @@ function DrawIndicators(cnum, vals, min, rng, nom, tol, tick, lbl, dec)
 {
     var ctx = ctxs[cnum];
     // draw horizontal guide lines
-    ctx.strokeStyle="#d3d3d3";
+    ctx.strokeStyle="#dddddd";
     ctx.lineWidth=1;
     ctx.beginPath();
     ctx.moveTo(0, by);
@@ -294,7 +296,7 @@ function DrawIndicators(cnum, vals, min, rng, nom, tol, tick, lbl, dec)
     }
 }
 
-// Draw vertical scale
+// draw vertical scale
 // Inputs: cnum=canvas number, x=x pixel position, min=scale minimum
 //         rng=scale range, tick=tick spacing, lbl=label spacing
 //         dec=decimal digits
@@ -331,7 +333,7 @@ function DrawPositionHistory()
 {
     var ctx = ctxs[kCanHis];
     ctx.clearRect(0, 0, cx[kCanHis], cy[kCanHis]);
-    ctx.strokeStyle="#d3d3d3";
+    ctx.strokeStyle="#dddddd";
     ctx.lineWidth=1;
     ctx.beginPath();
     ctx.moveTo(bx, by + (1 - (nom - tol) / rng) * scly);
@@ -345,7 +347,7 @@ function DrawPositionHistory()
     ctx.stroke();
     ctx.strokeStyle = '#000000';
     ctx.strokeRect(bx, by, kHistoryLen, scly);
-    DrawScale(1, bx, 0, 2, .1, .5, 1);
+    DrawScale(kCanHis, bx, 0, 2, .1, .5, 1);
     // draw horizontal scale
     ctx.textAlign="center";
     ctx.textBaseline="top";
@@ -388,12 +390,17 @@ function DrawPositionHistory()
         ctx.beginPath();
         // (start drawing at history element 1 because 0 may not be final)
         for (var j=1; j<his.length; ++j) {
-            if (typeof his[j][i] == 'undefined') continue;
+            if (lasty != null) {
+                ctx.lineTo(bx+j, lasty);
+            }
+            if (typeof his[j][i] == 'undefined') {
+                lasty = null;
+                continue;
+            }
             var y = Math.round((1 - (his[j][i]-min)/rng) * scly + by);
             if (lasty == null) {
                 ctx.moveTo(bx+j, y);
             } else {
-                ctx.lineTo(bx+j, lasty);
                 ctx.lineTo(bx+j, y);
             }
             lasty = y;
@@ -413,10 +420,45 @@ function ClearAll()
     DrawSpeeds();
 }
 
+// forget about server after disconnect, then try to reconnect again
+function ForgetServer(ws)
+{
+    if (ws == cuteServer) {
+        ClearAll();     // clear all indicators
+        cuteServer = null;
+        setTimeout(ConnectToServer, 1000);  // try to reconnect again later
+    }
+}
+
+// add measurements to history
+function AddToHistory(time, vals)
+{
+    if (hisTime == time) {
+        his[0] = vals;          // replace in history
+    } else {
+        for (;;) {
+            if (++hisTime == time) break;
+            if (hisTime == 0) { // (was -1)
+                hisTime = time;
+                break;
+            }
+            if ((hisTime %= kHistoryLen) == time) break;
+            his.unshift([]);    // pad with nulls
+        }
+        his.unshift(vals);      // add to history
+        // trim history length
+        if (his.length > kHistoryLen) {
+            his.splice(kHistoryLen, his.length - kHistoryLen);
+        }
+        needDrawHis = 1;        // redraw history plot
+    }
+}
+
 // connect to and communicate with CUTE cryostat server
 function ConnectToServer()
 {
-    if (cuteServer) return;
+    if (cuteServer) return; // allow only one server object
+
     try {
         var host = window.location.hostname;
         var port = 8080;
@@ -443,24 +485,7 @@ function ConnectToServer()
                         var v = msg.split(' ');
                         var t = Number(v.shift());
                         DrawDamperPositions(v);
-                        // add to history
-                        if (t != hisTime) {
-                            if (hisTime < 0) {
-                                hisTime = t - 1;
-                            }
-                            while (hisTime != t) {
-                                hisTime = (hisTime + 1) % kHistoryLen;
-                                his.unshift([]);
-                            }
-                            if (his.length > kHistoryLen) {
-                                his.splice(kHistoryLen, his.length - kHistoryLen);
-                            }
-                            needDrawHis = 1;  // redraw the history plot
-                        }
-                        // store these measurements in the history
-                        for (var i=0; i<v.length; ++i) {
-                            his[0][i] = v[i];
-                        }
+                        AddToHistory(t, v);
                         // draw history plot if necessary
                         if (needDrawHis) DrawPositionHistory();
                         airPressure = 1003 + 10 * v[3];
@@ -470,8 +495,8 @@ function ConnectToServer()
     
                     case 'B': { // history
                         v = msg.split(' ');
-                        hisTime = Number(v.shift());
-                        his.unshift(v);
+                        var t = Number(v.shift());
+                        AddToHistory(t, v);
                     } break;
                     
                     case 'C':   // console log
@@ -494,27 +519,15 @@ function ConnectToServer()
             };
         };
         ws.onclose = function(event) {
-            if (ws == cuteServer) {
-                if (cuteServer) ClearAll();
-                cuteServer = null;
-                setTimeout(ConnectToServer, 1000);  // try to reconnect again later
-            }
+            ForgetServer(ws);
         };
         ws.onerror = function() {
             ws.close();
-            if (ws == cuteServer) {
-                ClearAll();
-                cuteServer = null;
-                setTimeout(ConnectToServer, 1000);  // try to reconnect again later
-            }
+            ForgetServer(ws);
         };
     }
     catch (err) {
-        if (err && ws == cuteServer) {
-            ClearAll();
-            cuteServer = null;
-            setTimeout(ConnectToServer, 1000);  // try to reconnect again later
-        }
+        if (err) ForgetServer(ws);
     }
 }
 
