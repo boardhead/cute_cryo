@@ -94,15 +94,15 @@ for (var i=0; i<4; ++i) {
 }
 
 // drawing constants
-var bx = 50;    // left margin
-var by = 35;    // top margin
-var sep = 100;  // separation between scales
+var bx = 50;        // left margin
+var by = 35;        // top margin
+var sep = 100;      // separation between scales
 var scly = cy[kCanPos] - by - 40;   // scale height
 var numTicks = 20;
 
-var his = [ ];  // NOTE: don't call this "history" -- doesn't work in Firefox
+var his = [ ];      // NOTE: don't call this "history" -- doesn't work in Firefox
 var hisTime = -1;
-var airPressure = 1013;    // current air pressure (hPa)
+var airPressure = 1013; // current air pressure (hPa)
 var active = -1;    // current control state (-1=don't know, 0=inactive, 1=active)
 
 var gradient=ctxs[kCanPos].createLinearGradient(0,by,0,scly+by);
@@ -119,7 +119,7 @@ var damperCol = ["#dd0000","#00aa00","#0000ff"];
 var needDrawHis = 1;
 var cuteServer;
 
-// scale canvas to draw at full device resolution
+// Scale canvas to draw at full device resolution
 function ScaleCanvas(cnum)
 {
     var can = cans[cnum];
@@ -136,6 +136,7 @@ function ScaleCanvas(cnum)
     ctxs[cnum].scale(can.width/cx[cnum], can.height/cy[cnum]);
 }
 
+// Activate/deactivate position control
 function Activate(on)
 {
     // reset radio buttons to reflect hardware state
@@ -152,7 +153,7 @@ function Activate(on)
     }
 }
 
-// draw all motor speeds (canvas kCanSpd)
+// Draw all motor speeds (canvas kCanSpd)
 function DrawSpeeds(vals)
 {
     var ctx = ctxs[kCanSpd];
@@ -168,16 +169,23 @@ function DrawSpeeds(vals)
     }
 }
 
-// draw a motor speed indicator
+// Draw a motor speed indicator
 function DrawSpeed(cnum, x, val)
 {
     var ctx = ctxs[cnum];
     var y = 48;
     ctx.beginPath();
     if (!val) {
-        ctx.strokeRect(x-29, y-9, 18, 18);
+        // draw "X" to indicate motor is stopped
+        ctx.moveTo(x-29, y-9);
+        ctx.lineTo(x-11, y+9);
+        ctx.moveTo(x-11, y-9);
+        ctx.lineTo(x-29, y+9);
+        ctx.strokeStyle="#888888";
+        ctx.stroke();
         if (val == null) return;
     } else {
+        // draw up/down triangle to indicate motor direction
         if (val < 0) {
             ctx.moveTo(x-29, y-9+1);
             ctx.lineTo(x-20, y+9+1);
@@ -188,15 +196,17 @@ function DrawSpeed(cnum, x, val)
             ctx.lineTo(x-11, y+9-1);
         }
         ctx.closePath();
+        ctx.strokeStyle="#000000";
         ctx.stroke();
         ctx.fillStyle = "#ff0000";
         ctx.fill();
     }
+    // draw motor speed as text
     ctx.fillStyle="#444444";
     ctx.fillText(val, x, y);
 }
 
-// draw damper position indicators (canvas kCanPos)
+// Draw damper position indicators (canvas kCanPos)
 function DrawDamperPositions(vals)
 {
     var ctx = ctxs[kCanPos];
@@ -210,7 +220,7 @@ function DrawDamperPositions(vals)
     DrawIndicators(kCanPos, vals, 0, 2, nom, tol, .1, .5, 1);
 }
 
-// draw damper load indicators (canvas kCanLod)
+// Draw damper load indicators (canvas kCanLod)
 function DrawDamperLoads(vals)
 {
     var ctx = ctxs[kCanLod];
@@ -231,7 +241,7 @@ function DrawDamperLoads(vals)
     DrawIndicators(kCanLod, vals, -loadNom, loadNom*2, loadNom, loadTol, 2, 10, 0);
 }
 
-// draw all 3 position/load indicators
+// Draw all 3 position/load indicators
 // Inputs: cnum=canvas number, vals=load value array, min=scale minimum
 //         rng=scale range, nom=nominal value, tick=tick spacing,
 //         lbl=label spacing, dec=decimal digits
@@ -296,7 +306,7 @@ function DrawIndicators(cnum, vals, min, rng, nom, tol, tick, lbl, dec)
     }
 }
 
-// draw vertical scale
+// Draw vertical scale
 // Inputs: cnum=canvas number, x=x pixel position, min=scale minimum
 //         rng=scale range, tick=tick spacing, lbl=label spacing
 //         dec=decimal digits
@@ -328,7 +338,7 @@ function DrawScale(cnum, x, min, rng, tick, lbl, dec)
     ctx.stroke();
 }
 
-// draw position history (canvas kCanHis)
+// Draw position history (canvas kCanHis)
 function DrawPositionHistory()
 {
     var ctx = ctxs[kCanHis];
@@ -411,7 +421,7 @@ function DrawPositionHistory()
     needDrawHis = 0;
 }
 
-// clear all canvases
+// Clear all canvases
 function ClearAll()
 {
     DrawDamperPositions();
@@ -420,7 +430,7 @@ function ClearAll()
     DrawSpeeds();
 }
 
-// forget about server after disconnect, then try to reconnect again
+// Forget about server after disconnect, then try to reconnect again
 function ForgetServer(ws)
 {
     if (ws == cuteServer) {
@@ -430,7 +440,7 @@ function ForgetServer(ws)
     }
 }
 
-// add measurements to history
+// Add measurements to history
 function AddToHistory(time, vals)
 {
     if (hisTime == time) {
@@ -454,7 +464,7 @@ function AddToHistory(time, vals)
     }
 }
 
-// connect to and communicate with CUTE cryostat server
+// Connect to and communicate with CUTE cryostat server
 function ConnectToServer()
 {
     if (cuteServer) return; // allow only one server object
@@ -494,7 +504,7 @@ function ConnectToServer()
                     } break;
     
                     case 'B': { // history
-                        v = msg.split(' ');
+                        var v = msg.split(' ');
                         var t = Number(v.shift());
                         AddToHistory(t, v);
                     } break;
@@ -533,8 +543,8 @@ function ConnectToServer()
 
 //-----------------------------------------------------------------------------
 // main script
-ClearAll();
 
+ClearAll();
 ConnectToServer();
 
 </script>
