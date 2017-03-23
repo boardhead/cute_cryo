@@ -108,7 +108,7 @@ wsServer.on('request', function(request) {
                 }
                 switch (cmd) {
                     case 'Name':
-                        Log('['+name[n]+'] Name set to "'+str+'"');
+                        Log('['+name[n]+'] name = "'+str+'"');
                         name[n] = str;
                         return;
                     case 'Log':
