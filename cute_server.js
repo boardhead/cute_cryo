@@ -140,7 +140,7 @@ wsServer.on('request', function(request) {
         connection.Activate = function (str) { Activate.call(this,str); };
         connection.SendData = function (str) { this.send(str, function ack(error) { }); };
         connection.Respond = function (str) { this.SendData('C '+EscapeHTML(str)+'<br/>'); };
-        connection.Log = function (str) { Log('['+this.cuteName+'] '+str); };
+        connection.Log = function () { Log('['+this.cuteName+'] '+Array.from(arguments).join(' ')); };
 
         connection.on('close', function(reason) {
             // close user connection
