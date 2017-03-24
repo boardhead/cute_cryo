@@ -262,24 +262,30 @@ function OpenEVK(device)
             if (i < evks.length && evks[i]) continue;
             evks[i] = device;
             device.evkNum = i;
-            device.cuteIn  = device.interfaces[0].endpoints[0];
-            device.cuteOut = device.interfaces[0].endpoints[1];
-            device.cuteIn.evkNum  = i;
-            device.cuteOut.evkNum = i;
-            device.cuteIn.transferType  = usb.LIBUSB_TRANSFER_TYPE_BULK;
-            device.cuteOut.transferType = usb.LIBUSB_TRANSFER_TYPE_BULK;
-            device.cuteIn.timeout  = 1000;
-            device.cuteOut.timeout = 1000;
-            device.cuteIn.startPoll(4, 256);
-            device.cuteIn.on('data', HandleData);
-            device.cuteIn.on('error', HandleError);
+            var endIn = device.interfaces[0].endpoints[0];
+            var endOut = device.interfaces[0].endpoints[1];
+            endIn.evkNum  = i;
+            endOut.evkNum = i;
+            endIn.transferType  = usb.LIBUSB_TRANSFER_TYPE_BULK;
+            endOut.transferType = usb.LIBUSB_TRANSFER_TYPE_BULK;
+            endIn.timeout  = 1000;
+            endOut.timeout = 1000;
+            endIn.startPoll(4, 256);
+            endIn.on('data', HandleData);
+            endIn.on('error', HandleError);
             device.SendToEVK = function SendToEVK(cmd) {
-                this.cuteOut.transfer(cmd, function(error) {
-                    if (error) {
-                        Log('EVK', this.evkNum, 'send error');
-                        ForgetEVK(this);
-                    }
-                });
+                try {
+                    this.interfaces[0].endpoints[1].transfer(cmd, function(error) {
+                        if (error) {
+                            Log('EVK', this.evkNum, 'send error');
+                            ForgetEVK(this);
+                        }
+                    });
+                }
+                catch (err) {
+                    Log('EVK', this.evkNum, 'send exception');
+                    ForgetEVK(this);
+                }
             };
             device.SendToEVK("a.ser;b.ver;c.wdt 1\n");
             break;
@@ -398,7 +404,9 @@ function HandleResponse(evkNum, responseID, msg)
                         }
                         // change the number of this EVK
                         evks[i] = evks[evkNum];
-                        evks[i].evkNum = evks[i].cuteIn.evkNum = evks[i].cuteOut.evkNum = i;
+                        evks[i].evkNum = i;
+                        evks[i].interfaces[0].endpoints[0].evkNum = i;
+                        evks[i].interfaces[0].endpoints[1].evkNum = i;
                         evks[evkNum] = null;
                         evkNum = i;
                     }
