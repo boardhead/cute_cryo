@@ -4,16 +4,20 @@
 //
 // Description: CUTE cryostat position control hardware interface
 //
-// Revisions:   2017-03-16 - P. Harvey created
+// Revisions:   2017-03-16 - v0.01 P. Harvey created
 //
 // Syntax:      node cute_server.js
 //
 // Notes:       Requires additional node libraries to run.  Install them
 //              by typing: "npm install usb"
 //
-const kAtmel   = 0x03eb;
-const kEVK1101 = 0x2300;
-const kHistoryLen = 600;
+const kServerVersion    = 'v0.01';
+
+const kAtmel            = 0x03eb;
+const kEVK1101          = 0x2300;
+const kHistoryLen       = 600;
+
+const kBanner = '---- CUTE Cryostat Position Control ' + kServerVersion + ' ----';
 
 var evkSN = [
     'ffffffff3850313339302020ff0d0b',   // EVK 0
@@ -23,34 +27,24 @@ var evkSN = [
 var authorized = {
     '*' : 1, // (uncomment this to allow commands from any IP)
     'localhost' : 1,
-    '130.15.24.88' : 1,
+    '130.15.24.88' : 1
 };
-
-var ver = '0.01';
 
 var usb = require('usb');
 var fs = require('fs');
 var WebSocketServer = require('websocket').server;
 var http = require('http');
-var vals = [0,0,0];
 
 var evks = [];          // EVK devices
-var inpt = [];          // EVK in endpoints
-var outpt = [];         // EVK out endpoints
 var foundEVKs = 0;      // number of recognized EVKs
 var conn = [];          // http client connections
-var name = [];          // http client names
-var active = 0;
+var active = 0;         // flag set if position control is active
 
-var flashPin = ['pa07','pa08','pa21','pa08'];
+var flashPin = ['pa07','pa08','pa21','pa08'];   // sequence to flash LED's
 var flashNum = flashPin.length - 1;
 var flashTime = 0;
 
-// each element of the history array is an array with the following elements:
-// 0-2) damper heights
-// 3-5) damper forces
-// 6-8) damper nominal forces
-// 9) atm pressure 
+var vals = [0,0,0];     // most recent measured values
 var history = [];       // history of measured values
 var historyTime = -1;   // time of most recent history entry
 
@@ -82,76 +76,81 @@ wsServer.on('request', function(request) {
         // This is the most important callback for us, we'll handle
         // all messages from users here.
         connection.on('message', function(message) {
-            var str, n;
+            var str;
             // process WebSocket message
-            for (n=0; n<conn.length; ++n) {
-                if (conn[n] == this) break;
-            }
-            if (n >= conn.length) {
+            if (!this.cuteName) {
                 Log('Message from unknown client!');
                 return;
             }
             if (message.type === 'utf8') {
-                var addr = GetAddr(this);
-                if (!authorized[addr] && !authorized['*']) {
-                    Log("["+name[n]+"] Client has no command authority");
+                if (!authorized[GetAddr(this)] && !authorized['*']) {
+                    this.Respond('Sorry, you are not authorized to issue commands');
                     return;
                 }
                 var i = message.utf8Data.indexOf(':');
-                var cmd, str;
+                var cmd;
                 if (i > 0) {
-                    cmd = message.utf8Data.substr(0,i);
-                    str = message.utf8Data.substr(i+1);
+                    cmd = message.utf8Data.substr(0,i).trim();
+                    str = message.utf8Data.substr(i+1).trim();
                 } else {
-                    cmd = message.utf8Data;
+                    cmd = message.utf8Data.trim();
                     str = '';
                 }
-                switch (cmd) {
-                    case 'Name':
-                        Log('['+name[n]+'] name = "'+str+'"');
-                        name[n] = str;
-                        return;
-                    case 'Log':
+                switch (cmd.toLowerCase()) {
+                    case 'help':
+                        this.Respond('Available commands: help, name, log, active');
                         break;
-                    case 'On':
-                        Activate(1,name[n]);
-                        return;
-                    case 'Off':
-                        Activate(0,name[n]);
-                        return;
+                    case 'name':
+                        if (str.length) {
+                            this.Log('Name = "'+str+'"');
+                            this.cuteName = str;
+                        } else {
+                            this.Respond('Your name is "'+this.cuteName+'"');
+                        }
+                        break;
+                    case 'log':
+                        this.Log(str);
+                        break;
+                    case 'active':
+                        this.Activate(str);
+                        break;
                     default:
-                        str = 'Unknown command: ' + message.utf8Data;
+                        this.Respond('Unknown command: ' + cmd);
                         break;
                 }
             } else if (message.type === 'binary') {
                 // handle binary data here (message.binaryData)
-                str = "Received binary data length=" + message.binaryData.length;
+                this.Respond("Received binary data length=" + message.binaryData.length);
             } else {
-                str = 'Received unknown message type=' + message.type;;
+                this.Respond('Received unknown message type=' + message.type);
             }
-            Log("["+name[n]+"] "+str);
         });
 
-        var n = conn.length;
-        name[n] = GetAddr(request);
-        conn[n] = connection;
+        // add new connection to our list
+        conn[conn.length] = connection;
+        connection.cuteName = GetAddr(request);
+
+        // define a few convenience functions
+        connection.Activate = function (str) { Activate.call(this,str); };
+        connection.SendData = function (str) { this.send(str, function ack(error) { }); };
+        connection.Respond = function (str) { this.SendData('C '+EscapeHTML(str)+'<br/>'); };
+        connection.Log = function (str) { Log('['+this.cuteName+'] '+str); };
 
         connection.on('close', function(reason) {
             // close user connection
             for (var i=0; i<conn.length; ++i) {
                 if (conn[i] == this) {
-                    Log('[' + name[i] + '] Closed connection');
+                    this.Log('Closed connection');
                     conn.splice(i,1); // remove from list
-                    name.splice(i,1);
                     break;
                 }
             }
         });
 
-        connection.send('C ---- CUTE Cryostat Position Control v' + ver + ' ----<br/>(' + foundEVKs + ' EVKs connected)<br/>',
-            function ack(error) { });
+        connection.Respond(kBanner);
+        connection.Respond('(' + foundEVKs + ' EVKs connected)');
 
-        Log('[' + name[n] + '] Connected');
+        connection.Log('Connected');
         // send message indicating whether or not we are active
         connection.send('D ' + active, function ack(error) { });
 
@@ -162,7 +161,7 @@ wsServer.on('request', function(request) {
                          history[i][1].toFixed(4)+' '+
                          history[i][2].toFixed(4), function ack(error) {
                 // If error is not defined, the send has been completed,
-                // otherwise the error object will indicate what failed. 
+                // otherwise the error object will indicate what failed.
             });
         }
     }
@@ -192,19 +191,19 @@ usb.on('attach', function(device) {
 usb.on('detach', ForgetEVK);
 
 Log();
-Log('---- CUTE Cryostat Position Control v' + ver + ' ----');
+Log(kBanner);
 
 FindEVKs();     // find all connected EVK boards
 
 // poll the hardware periodically
 intrvl = setInterval(function() {
-    for (var i=0; i<inpt.length; ++i) {
-        if (inpt[i] == null) continue;
+    for (var i=0; i<evks.length; ++i) {
+        if (evks[i] == null) continue;
         if (i < 2) {
-            SendToEVK(i, "d.adc2;d.adc3\n");
+            evks[i].SendToEVK("d.adc2;d.adc3\n");
         } else {
             // re-send "ser" command in case it was missed
-            SendToEVK(i, "a.ser;b.ver;c.wdt 1\n");
+            evks[i].SendToEVK("a.ser;b.ver;c.wdt 1\n");
         }
     }
 }, 100);
@@ -221,21 +220,27 @@ function GetAddr(sock)
 
 //-----------------------------------------------------------------------------
 // Send data to all http clients
-function SendToClients(str)
+function BroadcastData(str)
 {
     for (var i=0; i<conn.length; ++i) {
-        conn[i].send(str, function ack(error) { });
+        conn[i].SendData(str);
     }
 }
 
 //-----------------------------------------------------------------------------
 // Activate/deactivate position control
-function Activate(on, addr)
+function Activate(arg)
 {
-    if (active != on) {
+    var on = { 'off':0, '0':0, 'on':1, '1':1 }[arg.toLowerCase()];
+    if (arg == '' || on == active) {
+        this.Respond('Active control is ' + (on==null ? 'currently' : 'already') +
+            ' ' + (active=='1' ? 'on' : 'off'));
+    } else if (on=='1' || on=='0') {
         active = on;
-        SendToClients('D ' + on);
-        Log('[' + addr + '] Position control ' + (active==1 ? 'activated' : 'deactivated'));
+        BroadcastData('D ' + on);
+        this.Log('Position control', active==1 ? 'activated' : 'deactivated');
+    } else {
+        this.Respond('Invalid argument for "active" command');
     }
 }
 
@@ -248,18 +253,29 @@ function OpenEVK(device)
         device.interfaces[0].claim();
         // find first unused input >= 2
         for (var i=2; ; ++i) {
-            if (i < inpt.length && inpt[i]) continue;
-            inpt[i] = device.interfaces[0].endpoints[0];
-            outpt[i] = device.interfaces[0].endpoints[1];
-            inpt[i].transferType = usb.LIBUSB_TRANSFER_TYPE_BULK;
-            outpt[i].transferType = usb.LIBUSB_TRANSFER_TYPE_BULK;
-            inpt[i].timeout = 1000;
-            outpt[i].timeout = 1000;
+            if (i < evks.length && evks[i]) continue;
             evks[i] = device;
-            inpt[i].startPoll(4, 1024);
-            inpt[i].on('data', HandleData);
-            inpt[i].on('error', HandleError);
-            SendToEVK(i, "a.ser;b.ver;c.wdt 1\n");
+            device.evkNum = i;
+            device.cuteIn  = device.interfaces[0].endpoints[0];
+            device.cuteOut = device.interfaces[0].endpoints[1];
+            device.cuteIn.evkNum  = i;
+            device.cuteOut.evkNum = i;
+            device.cuteIn.transferType  = usb.LIBUSB_TRANSFER_TYPE_BULK;
+            device.cuteOut.transferType = usb.LIBUSB_TRANSFER_TYPE_BULK;
+            device.cuteIn.timeout  = 1000;
+            device.cuteOut.timeout = 1000;
+            device.cuteIn.startPoll(4, 256);
+            device.cuteIn.on('data', HandleData);
+            device.cuteIn.on('error', HandleError);
+            device.SendToEVK = function SendToEVK(cmd) {
+                this.cuteOut.transfer(cmd, function(error) {
+                    if (error) {
+                        Log('EVK', this.evkNum, 'send error');
+                        ForgetEVK(this);
+                    }
+                });
+            };
+            device.SendToEVK("a.ser;b.ver;c.wdt 1\n");
             break;
         }
     }
@@ -272,26 +288,13 @@ function OpenEVK(device)
 // Forget about this EVK
 function ForgetEVK(deviceOrEndpoint)
 {
-    for (var i=0; i<evks.length; ++i) {
-        if (deviceOrEndpoint == evks[i] || deviceOrEndpoint == outpt[i]) {
-            Log('EVK', i, 'detached!');
-            evks[i] = inpt[i] = outpt[i] = null;
-            if (i < 2) --foundEVKs;
-            return;
-        }
+    if (deviceOrEndpoint.evkNum == null) {
+        Log('Unknown EVK detached!');
+    } else {
+        Log('EVK', deviceOrEndpoint.evkNum, 'detached!');
+        if (deviceOrEndpoint.evkNum < 2) --foundEVKs;
+        evks[deviceOrEndpoint.evkNum] = null;
     }
-}
-
-//-----------------------------------------------------------------------------
-// Send command to an EVK
-function SendToEVK(evkNum, cmd)
-{
-    outpt[evkNum].transfer(cmd, function(error) {
-        if (error) {
-            Log('EVK', evkNum, 'send error');
-            ForgetEVK(this);
-        }
-    });
 }
 
 //-----------------------------------------------------------------------------
@@ -305,14 +308,8 @@ function HandleError(err)
 // Receive data from our EVK devices
 function HandleData(data)
 {
-    var evkNum = -1;
-    for (var i=0; i<evks.length; ++i) {
-        if (inpt[i] == this) {
-            evkNum = i;
-            break;
-        }
-    }
-    if (evkNum < 0) {
+    var evkNum = this.evkNum;
+    if (evkNum == null) {
         Log('Data from unknown device!');
         return;
     }
@@ -392,10 +389,10 @@ function HandleResponse(evkNum, responseID, msg)
                         } else {
                             ++foundEVKs;
                         }
+                        // change the number of this EVK
                         evks[i] = evks[evkNum];
-                        inpt[i] = inpt[evkNum];
-                        outpt[i] = outpt[evkNum];
-                        evks[evkNum] = inpt[evkNum] = outpt[evkNum] = null;
+                        evks[i].evkNum = evks[i].cuteIn.evkNum = evks[i].cuteOut.evkNum = i;
+                        evks[evkNum] = null;
                         evkNum = i;
                     }
                     break;
@@ -403,7 +400,7 @@ function HandleResponse(evkNum, responseID, msg)
             }
             if (!evk) {
                 evk = 'Unknown EVK';
-                SendToEVK(evkNum, 'z.wdt 0\n');  // disable watchdog on unknown EVK
+                evks[evkNum].SendToEVK('z.wdt 0\n');  // disable watchdog on unknown EVK
             }
             Log(evk, 'attached (s/n', msg + ')');
             break;
@@ -429,7 +426,7 @@ function HandleResponse(evkNum, responseID, msg)
                         // after reading last adc from EVK 1
                         if (evkNum) {
                             var t = AddToHistory(0, vals);
-                            SendToClients('A '+ (t % kHistoryLen)+' '+
+                            BroadcastData('A '+ (t % kHistoryLen)+' '+
                                 vals[0].toFixed(4)+' '+
                                 vals[1].toFixed(4)+' '+
                                 vals[2].toFixed(4)+' '+
@@ -440,7 +437,7 @@ function HandleResponse(evkNum, responseID, msg)
                                 var cmd = "c."+flashPin[flashNum]+" 1;c."+
                                                flashPin[flashNew]+" 0\n";
                                 for (var i=0; i<2; ++i) {
-                                    if (outpt[i]) SendToEVK(i, cmd);
+                                    if (evks[i]) evks[i].SendToEVK(cmd);
                                 }
                                 flashNum = flashNew;
                                 flashTime = t;
@@ -453,7 +450,7 @@ function HandleResponse(evkNum, responseID, msg)
 
         case 'z':   // z = disable watchdog timer
             // forget about the unknown EVK
-            evks[evkNum] = inpt[evkNum] = outpt[evkNum] = null;
+            evks[evkNum] = null;
             break;
 
         default:
@@ -472,14 +469,7 @@ function FindEVKs()
         if (devs[i].deviceDescriptor.idVendor  == kAtmel &&
             devs[i].deviceDescriptor.idProduct == kEVK1101)
         {
-            var used;
-            for (var j=0; j<evks.length; ++j) {
-                if (devs[i] == evks[j]) {
-                    used = 1;
-                    break;
-                }
-            }
-            if (!used) OpenEVK(devs[i]);
+            OpenEVK(devs[i]);
         }
     }
 }
@@ -501,20 +491,20 @@ function EscapeHTML(str)
 function Log()
 {
     var msg;
+    var d = new Date();
+    var date = d.getFullYear() + '-' + Pad2(d.getMonth()+1) + '-' + Pad2(d.getDate());
     if (arguments.length) {
-        var d = new Date();
-        msg = d.getFullYear()    + '-' + Pad2(d.getMonth()+1) + '-' + Pad2(d.getDate())    + ' ' +
-              Pad2(d.getHours()) + ':' + Pad2(d.getMinutes()) + ':' + Pad2(d.getSeconds()) + ' ' +
-              Array.from(arguments).join(' ');
+        msg = date + ' ' + Pad2(d.getHours()) + ':' + Pad2(d.getMinutes()) + ':' +
+                Pad2(d.getSeconds()) + ' ' + Array.from(arguments).join(' ');
     } else {
         msg = '';
     }
     console.log(msg);
-    fs.appendFile('cute_server.log', msg + '\n', function(error) {
+    fs.appendFile('cute_server_'+date+'.log', msg + '\n', function(error) {
         if (error) console.log(error, 'writing log file');
     });
     // send back to clients
-    SendToClients('C ' +  EscapeHTML(msg) + '<br/>');
+    BroadcastData('C ' +  EscapeHTML(msg) + '<br/>');
 }
 
 //-----------------------------------------------------------------------------
@@ -534,7 +524,7 @@ function Cleanup()
     for (var i=0; i<evks.length; ++i) {
         if (!evks[i]) continue;
         var evki = evks[i];
-        evks[i] = inpt[i] = outpt[i] = null;
+        evks[i] = null;
         if (i < 2) --foundEVKs;
         // release any still-open interfaces
         try {

@@ -21,7 +21,7 @@ div.lg  { font:14px verdana; border:1px solid #d3d3d3; padding:3px 6px 3px 6px;
           width:668px; line-height:1.2em; overflow:auto }
 .brd    { border:1px solid #d3d3d3; }
 .no     { border:0; margin:0; padding:0 }
-.ca     { font:16px verdana; color:#444444; border:1px solid #d3d3d3; width:340px; height:70px; }
+.ca     { font:16px verdana; color:#444; border:1px solid #d3d3d3; width:340px; height:70px; }
 .tl     { padding: 8px 15px 5px 5px }
 .tr     { padding: 8px 5px 5px 10px }
 .tl2    { padding: 1px 15px 5px 5px }
@@ -68,13 +68,13 @@ Your browser does not support the HTML5 canvas tag.</canvas></td></tr>
 </table>
 
 <script type="text/javascript">
-const kHistoryLen = 600;
+var kHistoryLen = 600;
 
 // canvas numbers
-const kCanPos = 0;  // positions
-const kCanHis = 1;  // position history
-const kCanLod = 2;  // loads
-const kCanSpd = 3;  // motor speeds
+var kCanPos = 0;    // positions
+var kCanHis = 1;    // position history
+var kCanLod = 2;    // loads
+var kCanSpd = 3;    // motor speeds
 
 // CUTE parameters
 var max = 2;        // max height in mm
@@ -112,16 +112,16 @@ var airPressure = 1013; // current air pressure (hPa)
 var active = -1;    // current control state (-1=don't know, 0=inactive, 1=active)
 
 var gradient=ctxs[kCanPos].createLinearGradient(0,by,0,scly+by);
-gradient.addColorStop(0,   "#ff0000");
-gradient.addColorStop(0.3, "#ffff00");
-gradient.addColorStop(0.35,"#ffff00");
-gradient.addColorStop(0.5, "#00dd00");
-gradient.addColorStop(0.65,"#44ffff");
-gradient.addColorStop(0.7, "#44ffff");
-gradient.addColorStop(1.0, "#0000ff");
+gradient.addColorStop(0,   '#f00');
+gradient.addColorStop(0.3, '#ff0');
+gradient.addColorStop(0.35,'#ff0');
+gradient.addColorStop(0.5, '#0d0');
+gradient.addColorStop(0.65,'#4ff');
+gradient.addColorStop(0.7, '#4ff');
+gradient.addColorStop(1.0, '#00f');
 
-var damperLbl = ["A","B","C"];
-var damperCol = ["#dd0000","#00aa00","#0000ff"];
+var damperLbl = ['A','B','C'];
+var damperCol = ['#d00','#0a0','#00f'];
 var needDrawHis = 1;
 var cuteServer;
 
@@ -142,40 +142,47 @@ function ScaleCanvas(cnum)
     ctxs[cnum].scale(can.width/cx[cnum], can.height/cy[cnum]);
 }
 
+// Handle kepresses in Commend field
 function Comment(event)
 {
-    if (event.which == 13) {
-        var cmd = com.value.split(' ',1)[0];
-        switch (cmd) {
-            case '/name':
-                Send('Name:'+com.value.substr(cmd.length).trim());
-                break;
-            default:
-                Send('Log:"'+com.value+'"');
-                break;
+    if (event.which == 13) { // pressed return key?
+        // this is a command if it starts with a "/"
+        var txt = com.value;
+        var cmd = txt.split(' ',1)[0];
+        if (cmd && cmd.length>1 && cmd.substr(0,1) == '/') {
+            Send(cmd.substr(1) + ':' + txt.substr(txt.indexOf(cmd)+cmd.length+1));
+        } else {
+            Send('Log:"'+com.value+'"');
         }
         com.value = '';
     }
 }
 
+// Send command to CUTE server
 function Send(cmd)
 {
     if (cuteServer) cuteServer.send(cmd);
 }
 
 // Activate/deactivate position control
-function Activate(on)
+// Inputs: on=0/1, update=flag to update active state in GUI
+function Activate(on, update)
 {
-    // reset radio buttons to reflect hardware state
+    // update GUI state if specified
+    if (update && active != on) {
+        active = on;
+        title.style.backgroundColor = (on == 1 ? '#cfc' : (on == 0 ? '#fcc' : '#fff'));
+        onOff.innerHTML = (on == 1 ? '(On)' : (on == 0 ? '(Off)' : ''));
+    }
+    // force radio buttons to agree with current active state
     act0.checked = (active == 0);
     act1.checked = (active == 1);
-    onOff.innerHTML = active == 1 ? "(On)" : "(Off)";
-
+    // turn on/off active position control
     if (active != on) {
         if (on == "1") {
-            Send("On");
+            Send("active:1");
         } else if (window.confirm("Turn off position control?\n\nARE YOU SURE?")) {
-            Send("Off");
+            Send("active:0");
         }
     }
 }
@@ -185,10 +192,10 @@ function DrawSpeeds(vals)
 {
     var ctx = ctxs[kCanSpd];
     ctx.clearRect(0, 0, cx[kCanSpd], cy[kCanSpd]);
-    ctx.fillStyle="#444444";
-    ctx.font="16px verdana";
-    ctx.textAlign="center";
-    ctx.textBaseline="middle";
+    ctx.fillStyle = '#444';
+    ctx.font = '16px verdana';
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
     ctx.fillText("Motor speeds (steps/sec)", cx[kCanSpd]/2, 20);
     ctx.textAlign="left";
     for (var i=0; i<3; ++i) {
@@ -208,7 +215,7 @@ function DrawSpeed(cnum, x, val)
         ctx.lineTo(x-11, y+9);
         ctx.moveTo(x-11, y-9);
         ctx.lineTo(x-29, y+9);
-        ctx.strokeStyle="#888888";
+        ctx.strokeStyle="#888";
         ctx.stroke();
         if (val == null) return;
     } else {
@@ -223,13 +230,13 @@ function DrawSpeed(cnum, x, val)
             ctx.lineTo(x-11, y+9-1);
         }
         ctx.closePath();
-        ctx.strokeStyle="#000000";
+        ctx.strokeStyle="#000";
         ctx.stroke();
-        ctx.fillStyle = "#ff0000";
+        ctx.fillStyle = "#f00";
         ctx.fill();
     }
     // draw motor speed as text
-    ctx.fillStyle="#444444";
+    ctx.fillStyle="#444";
     ctx.fillText(val, x, y);
 }
 
@@ -239,12 +246,12 @@ function DrawDamperPositions(vals)
     var ctx = ctxs[kCanPos];
     ctx.clearRect(0, 0, cx[kCanPos], cy[kCanPos]);
     // draw y-axis label
-    ctx.fillStyle="#444444";
+    ctx.fillStyle="#444";
     ctx.font="16px verdana";
     ctx.textBaseline="middle";
     ctx.textAlign="center";
     ctx.fillText("Damper positions (mm)", cx[kCanPos]/2, cy[kCanPos]-20);
-    DrawIndicators(kCanPos, vals, 0, 2, nom, tol, .1, .5, 1);
+    DrawIndicators(kCanPos, vals, 0, 2, nom, tol, 0.1, 0.5, 1);
 }
 
 // Draw damper load indicators (canvas kCanLod)
@@ -255,7 +262,7 @@ function DrawDamperLoads(vals)
 
     ctx.clearRect(0, 0, cx[kCanLod], cy[kCanLod]);
     // draw y-axis label
-    ctx.fillStyle="#444444";
+    ctx.fillStyle="#444";
     ctx.font="16px verdana";
     ctx.textBaseline="middle";
     ctx.textAlign="center";
@@ -276,7 +283,7 @@ function DrawIndicators(cnum, vals, min, rng, nom, tol, tick, lbl, dec)
 {
     var ctx = ctxs[cnum];
     // draw horizontal guide lines
-    ctx.strokeStyle="#dddddd";
+    ctx.strokeStyle="#ddd";
     ctx.lineWidth=1;
     ctx.beginPath();
     ctx.moveTo(0, by);
@@ -292,16 +299,16 @@ function DrawIndicators(cnum, vals, min, rng, nom, tol, tick, lbl, dec)
         // draw damper label ("A","B" or "C")
         ctx.font="16px verdana";
         ctx.textAlign="left";
-        ctx.fillStyle="#000000";
-        ctx.fillText(damperLbl[i], bx+sep*i, by*.6);
+        ctx.fillStyle="#000";
+        ctx.fillText(damperLbl[i], bx+sep*i, by*0.6);
         DrawScale(cnum, bx + sep * i, min, rng, tick, lbl, dec);
         if (vals) {
             // draw color bar
             ctx.fillStyle=gradient;
             ctx.fillRect(bx+sep*i,by,10,scly);
         }
-        ctx.lineWidth=.5;
-        ctx.strokeStyle="#000000";
+        ctx.lineWidth=0.5;
+        ctx.strokeStyle="#000";
         ctx.strokeRect(bx+sep*i,by,10,scly);
         if (!vals) continue;
         // draw triangle indicator
@@ -323,11 +330,11 @@ function DrawIndicators(cnum, vals, min, rng, nom, tol, tick, lbl, dec)
         ctx.textAlign="left";
         var t = val - nom - min;
         if (t > tol) {
-            ctx.fillStyle="#ff0000";
+            ctx.fillStyle="#f00";
         } else if (t < -tol) {
-            ctx.fillStyle="#0000ff";
+            ctx.fillStyle="#00f";
         } else {
-            ctx.fillStyle="#008800";
+            ctx.fillStyle="#080";
         }
         ctx.fillText(val.toFixed(dec+1), bx+24+sep*i, y);
     }
@@ -341,9 +348,9 @@ function DrawScale(cnum, x, min, rng, tick, lbl, dec)
 {
     var ctx = ctxs[cnum];
     // draw scale
-    ctx.strokeStyle="#000000";
-    ctx.lineWidth=.5;
-    ctx.fillStyle="#444444";
+    ctx.strokeStyle="#000";
+    ctx.lineWidth=0.5;
+    ctx.fillStyle="#444";
     ctx.font="12px verdana";
     ctx.textAlign="right";
     ctx.textBaseline="middle";
@@ -360,7 +367,7 @@ function DrawScale(cnum, x, min, rng, tick, lbl, dec)
         } else {
             ctx.moveTo(x-3, pix);
         }
-        ctx.lineTo(x, pix);        
+        ctx.lineTo(x, pix);
     }
     ctx.stroke();
 }
@@ -370,7 +377,7 @@ function DrawPositionHistory()
 {
     var ctx = ctxs[kCanHis];
     ctx.clearRect(0, 0, cx[kCanHis], cy[kCanHis]);
-    ctx.strokeStyle="#dddddd";
+    ctx.strokeStyle="#ddd";
     ctx.lineWidth=1;
     ctx.beginPath();
     ctx.moveTo(bx, by + (1 - (nom - tol) / rng) * scly);
@@ -382,9 +389,9 @@ function DrawPositionHistory()
         ctx.lineTo(bx + i, by + scly);
     }
     ctx.stroke();
-    ctx.strokeStyle = '#000000';
+    ctx.strokeStyle = '#000';
     ctx.strokeRect(bx, by, kHistoryLen, scly);
-    DrawScale(kCanHis, bx, 0, 2, .1, .5, 1);
+    DrawScale(kCanHis, bx, 0, 2, 0.1, 0.5, 1);
     // draw horizontal scale
     ctx.textAlign="center";
     ctx.textBaseline="top";
@@ -408,7 +415,7 @@ function DrawPositionHistory()
     ctx.font="16px verdana";
     ctx.textAlign="right";
     ctx.textBaseline="alphabetic";
-    ctx.fillStyle="#444444";
+    ctx.fillStyle="#444";
     ctx.fillText("Damper position history:", bx + kHistoryLen/2, 23);
     for (var i=0; i<3; ++i) {
         ctx.beginPath();
@@ -430,7 +437,7 @@ function DrawPositionHistory()
             if (lasty != null) {
                 ctx.lineTo(bx+j, lasty);
             }
-            if (typeof his[j][i] == 'undefined') {
+            if (his[j][i] == null) {
                 lasty = null;
                 continue;
             }
@@ -455,6 +462,9 @@ function ClearAll()
     DrawPositionHistory();
     DrawDamperLoads();
     DrawSpeeds();
+    title.style.backgroundColor = '#fff';
+    onOff.innerHTML = '';
+    Activate(-1,1);
 }
 
 // Forget about server after disconnect, then try to reconnect again
@@ -529,13 +539,13 @@ function ConnectToServer()
                         air.innerHTML = airPressure.toFixed(1);
                         DrawDamperLoads([25, 25, 25]);
                     } break;
-    
+
                     case 'B': { // history
                         var v = msg.split(' ');
                         var t = Number(v.shift());
                         AddToHistory(t, v);
                     } break;
-                    
+
                     case 'C':   // console log
                         var log = document.getElementById('log');
                         var lines = log.innerHTML.split('\n');
@@ -544,13 +554,11 @@ function ConnectToServer()
                         log.innerHTML = lines.join('\n');
                         log.scrollTop = log.scrollHeight;
                         break;
-    
+
                     case 'D': { // system active/inactive
-                        active = msg;
-                        title.style.backgroundColor = (msg == 1 ? '#ccffcc' : '#ffcccc');
-                        Activate(active);   // update radio buttons
+                        Activate(msg,1);  // update active state
                         DrawSpeeds(active==1 ? [100,0,-40] : [0,0,0]); //TEST
-                            
+
                     } break;
                 }
             };
