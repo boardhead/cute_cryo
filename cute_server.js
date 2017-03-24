@@ -262,7 +262,7 @@ function OpenEVK(device)
             if (i < evks.length && evks[i]) continue;
             evks[i] = device;
             device.evkNum = i;
-            var endIn = device.interfaces[0].endpoints[0];
+            var endIn  = device.interfaces[0].endpoints[0];
             var endOut = device.interfaces[0].endpoints[1];
             endIn.evkNum  = i;
             endOut.evkNum = i;
