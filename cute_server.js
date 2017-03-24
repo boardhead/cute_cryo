@@ -98,7 +98,7 @@ wsServer.on('request', function(request) {
                 }
                 switch (cmd.toLowerCase()) {
                     case 'help':
-                        this.Respond('Available commands: help, name, log, active');
+                        this.Respond('Available commands: help, name, log, who, active');
                         break;
                     case 'name':
                         if (str.length) {
@@ -110,6 +110,12 @@ wsServer.on('request', function(request) {
                         break;
                     case 'log':
                         this.Log(str);
+                        break;
+                    case 'who':
+                        this.Respond('Current users: ' +
+                            conn.map(function(e){
+                                return e.cuteName + (e==this?' (you)':'')
+                            },this).join(', '));
                         break;
                     case 'active':
                         this.Activate(str);
@@ -288,12 +294,13 @@ function OpenEVK(device)
 // Forget about this EVK
 function ForgetEVK(deviceOrEndpoint)
 {
-    if (deviceOrEndpoint.evkNum == null) {
+    var evkNum = deviceOrEndpoint.evkNum;
+    if (evkNum == null) {
         Log('Unknown EVK detached!');
-    } else {
-        Log('EVK', deviceOrEndpoint.evkNum, 'detached!');
-        if (deviceOrEndpoint.evkNum < 2) --foundEVKs;
-        evks[deviceOrEndpoint.evkNum] = null;
+    } else if (evks[evkNum]) {
+        Log('EVK', evkNum, 'detached!');
+        if (evkNum < 2) --foundEVKs;
+        evks[evkNum] = null;
     }
 }
 
@@ -324,8 +331,8 @@ function HandleData(data)
         if (!str.length) continue;
         if (str.length < 4 || (str.substr(1,1) != '.') || str.substr(2,2) != 'OK') {
             // (we sometimes get truncated responses from the first couple of commands
-            // sent to the EVK, but these don't cause problems, so don't print this
-            // this error for now)
+            // sent before the EVK has fully initialized, but these don't cause problems,
+            // so just ignore these errors for now)
             // Log('EVK', evkNum, 'Command error:', str);
         } else {
             var msg = str.length > 5 ? str.substr(5) : '';
@@ -399,7 +406,7 @@ function HandleResponse(evkNum, responseID, msg)
                 }
             }
             if (!evk) {
-                evk = 'Unknown EVK';
+                evk = 'Unknown EVK ' + evkNum;
                 evks[evkNum].SendToEVK('z.wdt 0\n');  // disable watchdog on unknown EVK
             }
             Log(evk, 'attached (s/n', msg + ')');
@@ -481,7 +488,7 @@ function EscapeHTML(str)
     var entityMap = {
         "&": "&amp;",
         "<": "&lt;",
-        ">": "&gt;",
+        ">": "&gt;"
     };
     return str.replace(/[&<>]/g, function (s) { return entityMap[s]; });
 }
