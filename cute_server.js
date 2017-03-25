@@ -19,9 +19,9 @@ const kHistoryLen       = 600;
 
 const kBanner = '---- CUTE Cryostat Position Control ' + kServerVersion + ' ----';
 
-var evkSN = [
-    'ffffffff3850313339302020ff0d0b',   // EVK 0
-    'ffffffff3850313339302020ff1011'    // EVK 1
+var avrSN = [
+    'ffffffff3850313339302020ff0d0b',   // AVR0
+    'ffffffff3850313339302020ff1011'    // AVR1
 ];
 
 var authorized = {
@@ -35,8 +35,8 @@ var fs = require('fs');
 var WebSocketServer = require('websocket').server;
 var http = require('http');
 
-var evks = [];          // EVK devices
-var foundEVKs = 0;      // number of recognized EVKs
+var avrs = [];          // AVR devices
+var foundAVRs = 0;      // number of recognized AVRs
 var conn = [];          // http client connections
 var active = 0;         // flag set if position control is active
 
@@ -98,18 +98,15 @@ wsServer.on('request', function(request) {
                 }
                 switch (cmd.toLowerCase()) {
                     case 'help':
-                        this.Respond('Available commands: help, name, log, who, active');
+                        this.Respond('Available commands: help, name, who, log, active, avr#');
                         break;
                     case 'name':
                         if (str.length) {
-                            this.Log('Name = "'+str+'"');
+                            this.Log('/'+cmd, str);
                             this.cuteName = str;
                         } else {
                             this.Respond('Your name is "'+this.cuteName+'"');
                         }
-                        break;
-                    case 'log':
-                        this.Log(str);
                         break;
                     case 'who':
                         this.Respond('Current users: ' +
@@ -120,7 +117,23 @@ wsServer.on('request', function(request) {
                     case 'active':
                         this.Activate(str);
                         break;
+                    case 'log':
+                        this.Log(str);
+                        break;
                     default:
+                        // handle AVR commands
+                        if (cmd.length==4 && cmd.substr(0,3).toLowerCase() == 'avr') {
+                            var n = cmd.substr(3,1);
+                            if (!isNaN(n)) {
+                                this.Log('/'+cmd, str);
+                                if (avrs[n]) {
+                                    avrs[n].SendToAVR('e.'+str.trim().toLowerCase()+'\n');
+                                } else {
+                                    this.Log('AVR'+n,'is not connected');
+                                }
+                                break;
+                            }
+                        }
                         this.Respond('Unknown command: ' + cmd);
                         break;
                 }
@@ -138,9 +151,15 @@ wsServer.on('request', function(request) {
 
         // define a few convenience functions
         connection.Activate = function (str) { Activate.call(this,str); };
-        connection.SendData = function (str) { this.send(str, function ack(error) { }); };
-        connection.Respond = function (str) { this.SendData('C '+EscapeHTML(str)+'<br/>'); };
-        connection.Log = function () { Log('['+this.cuteName+'] '+Array.from(arguments).join(' ')); };
+        connection.SendData = function (str) {
+            this.send(str, function ack(error) { });
+        };
+        connection.Respond = function () {
+            this.SendData('C '+EscapeHTML(Array.from(arguments).join(' '))+'<br/>');
+        };
+        connection.Log = function () {
+            Log('['+this.cuteName+'] '+Array.from(arguments).join(' '));
+        };
 
         connection.on('close', function(reason) {
             // close user connection
@@ -154,7 +173,7 @@ wsServer.on('request', function(request) {
         });
 
         connection.Respond(kBanner);
-        connection.Respond('(' + foundEVKs + ' EVKs connected)');
+        connection.Respond('(' + foundAVRs + ' AVRs connected)');
 
         connection.Log('Connected');
         // send message indicating whether or not we are active
@@ -189,27 +208,27 @@ usb.on('attach', function(device) {
     if (device.deviceDescriptor.idVendor  == kAtmel &&
         device.deviceDescriptor.idProduct == kEVK1101)
     {
-        OpenEVK(device);
+        OpenAVR(device);
     }
 });
 
 // handle USB devices that have disconnected
-usb.on('detach', ForgetEVK);
+usb.on('detach', ForgetAVR);
 
 Log();
 Log(kBanner);
 
-FindEVKs();     // find all connected EVK boards
+FindAVRs();     // find all connected AVR boards
 
 // poll the hardware periodically
 intrvl = setInterval(function() {
-    for (var i=0; i<evks.length; ++i) {
-        if (evks[i] == null) continue;
+    for (var i=0; i<avrs.length; ++i) {
+        if (avrs[i] == null) continue;
         if (i < 2) {
-            evks[i].SendToEVK("d.adc2;d.adc3\n");
+            avrs[i].SendToAVR("d.adc2;d.adc3\n");
         } else {
             // re-send "ser" command in case it was missed
-            evks[i].SendToEVK("a.ser;b.ver;c.wdt 1\n");
+            avrs[i].SendToAVR("a.ser;b.ver;c.wdt 1\n");
         }
     }
 }, 100);
@@ -251,21 +270,21 @@ function Activate(arg)
 }
 
 //-----------------------------------------------------------------------------
-// Open communication with our EVK device
-function OpenEVK(device)
+// Open communication with our AVR device
+function OpenAVR(device)
 {
     try {
         device.open();
         device.interfaces[0].claim();
         // find first unused input >= 2
         for (var i=2; ; ++i) {
-            if (i < evks.length && evks[i]) continue;
-            evks[i] = device;
-            device.evkNum = i;
+            if (i < avrs.length && avrs[i]) continue;
+            avrs[i] = device;
+            device.avrNum = i;
             var endIn  = device.interfaces[0].endpoints[0];
             var endOut = device.interfaces[0].endpoints[1];
-            endIn.evkNum  = i;
-            endOut.evkNum = i;
+            endIn.avrNum  = i;
+            endOut.avrNum = i;
             endIn.transferType  = usb.LIBUSB_TRANSFER_TYPE_BULK;
             endOut.transferType = usb.LIBUSB_TRANSFER_TYPE_BULK;
             endIn.timeout  = 1000;
@@ -273,40 +292,40 @@ function OpenEVK(device)
             endIn.startPoll(4, 256);
             endIn.on('data', HandleData);
             endIn.on('error', HandleError);
-            device.SendToEVK = function SendToEVK(cmd) {
+            device.SendToAVR = function SendToAVR(cmd) {
                 try {
                     this.interfaces[0].endpoints[1].transfer(cmd, function(error) {
                         if (error) {
-                            Log('EVK', this.evkNum, 'send error');
-                            ForgetEVK(this);
+                            Log('AVR'+this.avrNum, 'send error');
+                            ForgetAVR(this);
                         }
                     });
                 }
                 catch (err) {
-                    Log('EVK', this.evkNum, 'send exception');
-                    ForgetEVK(this);
+                    Log('AVR'+this.avrNum, 'send exception');
+                    ForgetAVR(this);
                 }
             };
-            device.SendToEVK("a.ser;b.ver;c.wdt 1\n");
+            device.SendToAVR("a.ser;b.ver;c.wdt 1\n");
             break;
         }
     }
     catch (err) {
-        Log('Error opening EVK device');
+        Log('Error opening AVR device');
     }
 }
 
 //-----------------------------------------------------------------------------
-// Forget about this EVK
-function ForgetEVK(deviceOrEndpoint)
+// Forget about this AVR
+function ForgetAVR(deviceOrEndpoint)
 {
-    var evkNum = deviceOrEndpoint.evkNum;
-    if (evkNum == null) {
-        Log('Unknown EVK detached!');
-    } else if (evks[evkNum]) {
-        Log('EVK', evkNum, 'detached!');
-        if (evkNum < 2) --foundEVKs;
-        evks[evkNum] = null;
+    var avrNum = deviceOrEndpoint.avrNum;
+    if (avrNum == null) {
+        Log('Unknown AVR detached!');
+    } else if (avrs[avrNum]) {
+        Log('AVR'+avrNum, 'detached!');
+        if (avrNum < 2) --foundAVRs;
+        avrs[avrNum] = null;
     }
 }
 
@@ -318,11 +337,11 @@ function HandleError(err)
 }
 
 //-----------------------------------------------------------------------------
-// Receive data from our EVK devices
+// Receive data from our AVR devices
 function HandleData(data)
 {
-    var evkNum = this.evkNum;
-    if (evkNum == null) {
+    var avrNum = this.avrNum;
+    if (avrNum == null) {
         Log('Data from unknown device!');
         return;
     }
@@ -332,19 +351,26 @@ function HandleData(data)
     if (j > -1) str = str.substr(0, j); // remove null
     // process each response separately
     var lines = str.split("\n");
+    var id;
     for (j=0; j<lines.length; ++j) {
         var str = lines[j];
         if (!str.length) continue;
-        if (str.length < 4 || (str.substr(1,1) != '.') || str.substr(2,2) != 'OK') {
-            // (we sometimes get truncated responses from the first couple of commands
-            // sent before the EVK has fully initialized, but these don't cause problems,
-            // so just ignore these errors for now)
-            // Log('EVK', evkNum, 'Command error:', str);
-        } else {
-            var msg = str.length > 5 ? str.substr(5) : '';
-            var id = str.substr(0,1);
-            evkNum = HandleResponse(evkNum, id, msg);
+        if (str.length >= 4 && str.substr(1,1) == '.') {
+            id = str.substr(0,1);
+            if (id == 'e') {
+                str = str.substr(2);    // only remove command ID from 'e' response
+            } else {                
+                if (str.substr(2,2) != 'OK') {
+                //  Log('AVR'+avrNum, 'Bad response:', str);
+                    continue;
+                }
+                str = str.length > 5 ? str.substr(5) : '';
+            }
+        } else if (id != 'e') { // ('e' responses may be multi-line)
+        //  Log('AVR'+avrNum, 'Unknown response:', str);
+            continue;
         }
+        avrNum = HandleResponse(avrNum, id, str);
     }
 }
 
@@ -376,52 +402,52 @@ function AddToHistory(i,vals)
 }
 
 //-----------------------------------------------------------------------------
-// Handle response from an EVK command
-// Returns: new EVK number (may change in response to a "ser" command)
-function HandleResponse(evkNum, responseID, msg)
+// Handle response from an AVR command
+// Returns: new AVR number (may change in response to a "ser" command)
+function HandleResponse(avrNum, responseID, msg)
 {
     switch (responseID) {
         case 'a':   // a = get serial number
-            var evk;
-            for (var i=0; i<evkSN.length; ++i) {
-                if (msg == evkSN[i]) {
-                    evk = 'EVK ' + i;
-                    if (evkNum < 2 || !evks[evkNum]) {
-                        if (evks[i] != evks[evkNum]) {
-                            Log(evk, 'INTERNAL ERROR');
+            var avr;
+            for (var i=0; i<avrSN.length; ++i) {
+                if (msg == avrSN[i]) {
+                    avr = 'AVR' + i;
+                    if (avrNum < 2 || !avrs[avrNum]) {
+                        if (avrs[i] != avrs[avrNum]) {
+                            Log(avr, 'INTERNAL ERROR');
                         } else {
                             // could get here if we got a "ser" response
-                            // from an already identified EVK
-                            return evkNum; // (nothing to do)
+                            // from an already identified AVR
+                            return avrNum; // (nothing to do)
                         }
                     } else {
-                        if (evks[i]) {
-                            if (evks[i] != evks[evkNum]) {
-                                Log(evk, 'ERROR! Already exists!');
+                        if (avrs[i]) {
+                            if (avrs[i] != avrs[avrNum]) {
+                                Log(avr, 'ERROR! Already exists!');
                             }
                         } else {
-                            ++foundEVKs;
+                            ++foundAVRs;
                         }
-                        // change the number of this EVK
-                        evks[i] = evks[evkNum];
-                        evks[i].evkNum = i;
-                        evks[i].interfaces[0].endpoints[0].evkNum = i;
-                        evks[i].interfaces[0].endpoints[1].evkNum = i;
-                        evks[evkNum] = null;
-                        evkNum = i;
+                        // change the number of this AVR
+                        avrs[i] = avrs[avrNum];
+                        avrs[i].avrNum = i;
+                        avrs[i].interfaces[0].endpoints[0].avrNum = i;
+                        avrs[i].interfaces[0].endpoints[1].avrNum = i;
+                        avrs[avrNum] = null;
+                        avrNum = i;
                     }
                     break;
                 }
             }
-            if (!evk) {
-                evk = 'Unknown EVK ' + evkNum;
-                evks[evkNum].SendToEVK('z.wdt 0\n');  // disable watchdog on unknown EVK
+            if (!avr) {
+                avr = 'Unknown AVR ' + avrNum;
+                avrs[avrNum].SendToAVR('z.wdt 0\n');  // disable watchdog on unknown AVR
             }
-            Log(evk, 'attached (s/n', msg + ')');
+            Log(avr, 'attached (s/n', msg + ')');
             break;
 
         case 'b':   // b = log this response
-            Log('EVK', evkNum, msg);
+            Log('AVR'+avrNum, msg);
             break;
 
         case 'c':   // c = ignore this response
@@ -433,13 +459,13 @@ function HandleResponse(evkNum, responseID, msg)
                 // ie. "adc2 512"
                 switch (msg.substr(3,1)) {
                     case '2':
-                        vals[evkNum*2] = msg.substr(j+4) / 900;
+                        vals[avrNum*2] = msg.substr(j+4) / 900;
                         break;
                     case '3':
-                        vals[evkNum*2+1] = msg.substr(j+4) / 545;
+                        vals[avrNum*2+1] = msg.substr(j+4) / 545;
                         // save in history and send data back to http clients
-                        // after reading last adc from EVK 1
-                        if (evkNum) {
+                        // after reading last adc from AVR1
+                        if (avrNum) {
                             var t = AddToHistory(0, vals);
                             BroadcastData('A '+ (t % kHistoryLen)+' '+
                                 vals[0].toFixed(4)+' '+
@@ -452,7 +478,7 @@ function HandleResponse(evkNum, responseID, msg)
                                 var cmd = "c."+flashPin[flashNum]+" 1;c."+
                                                flashPin[flashNew]+" 0\n";
                                 for (var i=0; i<2; ++i) {
-                                    if (evks[i]) evks[i].SendToEVK(cmd);
+                                    if (avrs[i]) avrs[i].SendToAVR(cmd);
                                 }
                                 flashNum = flashNew;
                                 flashTime = t;
@@ -463,28 +489,32 @@ function HandleResponse(evkNum, responseID, msg)
             }
             break;
 
+        case 'e':   // e = manual AVR command
+            Log('[AVR'+avrNum+']', msg);
+            break;
+
         case 'z':   // z = disable watchdog timer
-            // forget about the unknown EVK
-            evks[evkNum] = null;
+            // forget about the unknown AVR
+            avrs[avrNum] = null;
             break;
 
         default:
-            Log('EVK', evkNum, 'Unknown response:', msg);
+            Log('AVR'+avrNum, 'Unknown response:', msg);
             break;
     }
-    return evkNum;
+    return avrNum;
 }
 
 //-----------------------------------------------------------------------------
-// Enumerate USB devices to locate our EVK boards
-function FindEVKs()
+// Enumerate USB devices to locate our AVR boards
+function FindAVRs()
 {
     var devs = usb.getDeviceList();
     for (var i=0; i<devs.length; ++i) {
         if (devs[i].deviceDescriptor.idVendor  == kAtmel &&
             devs[i].deviceDescriptor.idProduct == kEVK1101)
         {
-            OpenEVK(devs[i]);
+            OpenAVR(devs[i]);
         }
     }
 }
@@ -536,15 +566,15 @@ function Cleanup()
 {
     clearInterval(intrvl);  // stop our polling
 
-    for (var i=0; i<evks.length; ++i) {
-        if (!evks[i]) continue;
-        var evki = evks[i];
-        evks[i] = null;
-        if (i < 2) --foundEVKs;
+    for (var i=0; i<avrs.length; ++i) {
+        if (!avrs[i]) continue;
+        var avri = avrs[i];
+        avrs[i] = null;
+        if (i < 2) --foundAVRs;
         // release any still-open interfaces
         try {
-            evksi.interfaces[0].release(true, function (error) { });
-            evksi.close();
+            avrsi.interfaces[0].release(true, function (error) { });
+            avrsi.close();
         }
         catch (err) {
         }

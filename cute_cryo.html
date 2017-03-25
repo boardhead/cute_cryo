@@ -62,7 +62,8 @@ Your browser does not support the HTML5 canvas tag.</canvas></td></tr>
 
 <tr><td colspan=2>
 <div id="typ" class="lg brd" style="height:2em;">Comment:
-<input type="text" id="com" size="75" style="font:14px verdana" onkeypress="Comment(event)"></div>
+<input type="text" id="com" size="75" style="font:14px verdana"
+       onkeypress="Comment(event)" onkeydown="CommentKey(event)"></div>
 </td></tr>
 
 </table>
@@ -98,6 +99,9 @@ for (var i=0; i<4; ++i) {
     ctxs[i] = cans[i].getContext('2d');
     ScaleCanvas(i);
 }
+
+var comHis = [''];  // comment history
+var comNum = 0;     // current comment in history
 
 // drawing constants
 var bx = 50;        // left margin
@@ -146,6 +150,13 @@ function ScaleCanvas(cnum)
 function Comment(event)
 {
     if (event.which == 13) { // pressed return key?
+        comNum = 0;
+        // save in comment history
+        if (comHis[0] != com.value) {
+            comHis[0] = com.value;
+            comHis.unshift('');
+            if (comHis.length > 100) comHis.pop();
+        }
         // this is a command if it starts with a "/"
         var txt = com.value;
         var cmd = txt.split(' ',1)[0];
@@ -155,6 +166,24 @@ function Comment(event)
             Send('Log:"'+com.value+'"');
         }
         com.value = '';
+    }
+}
+
+// Handle up/down keys in comment text entry
+function CommentKey(event)
+{
+    if (event.which == 38 || event.which == 40) {
+        event.preventDefault();
+        if (comNum == 0) comHis[0] = com.value;  // save current comment
+        if (event.which == 38) {
+            if (comNum < comHis.length - 1) {
+                com.value = comHis[++comNum];
+            }
+        } else {
+            if (comNum > 0) {
+                com.value = comHis[--comNum];
+            }
+        }
     }
 }
 
