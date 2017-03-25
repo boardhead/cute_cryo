@@ -69,7 +69,9 @@ Your browser does not support the HTML5 canvas tag.</canvas></td></tr>
 </table>
 
 <script type="text/javascript">
-var kHistoryLen = 600;
+var kPosHisLen = 600;   // position history length
+var kComHisLen = 100;   // comment history length
+var kLogHisLen = 200;   // log window scrollback lines
 
 // canvas numbers
 var kCanPos = 0;    // positions
@@ -155,7 +157,7 @@ function Comment(event)
         if (comHis[0] != com.value) {
             comHis[0] = com.value;
             comHis.unshift('');
-            if (comHis.length > 100) comHis.pop();
+            if (comHis.length > kComHisLen) comHis.pop();
         }
         // this is a command if it starts with a "/"
         var txt = com.value;
@@ -410,22 +412,22 @@ function DrawPositionHistory()
     ctx.lineWidth=1;
     ctx.beginPath();
     ctx.moveTo(bx, by + (1 - (nom - tol) / rng) * scly);
-    ctx.lineTo(bx + kHistoryLen, by + (1 - (nom - tol) / rng) * scly);
+    ctx.lineTo(bx + kPosHisLen, by + (1 - (nom - tol) / rng) * scly);
     ctx.moveTo(bx, by + (1 - (nom + tol) / rng) * scly);
-    ctx.lineTo(bx + kHistoryLen, by + (1 - (nom + tol) / rng) * scly);
-    for (var i=0; i<=kHistoryLen; i+=60) {
+    ctx.lineTo(bx + kPosHisLen, by + (1 - (nom + tol) / rng) * scly);
+    for (var i=0; i<=kPosHisLen; i+=60) {
         ctx.moveTo(bx + i, by);
         ctx.lineTo(bx + i, by + scly);
     }
     ctx.stroke();
     ctx.strokeStyle = '#000';
-    ctx.strokeRect(bx, by, kHistoryLen, scly);
+    ctx.strokeRect(bx, by, kPosHisLen, scly);
     DrawScale(kCanHis, bx, 0, 2, 0.1, 0.5, 1);
     // draw horizontal scale
     ctx.textAlign="center";
     ctx.textBaseline="top";
     ctx.beginPath();
-    for (var i=0; i<=kHistoryLen; i+=10) {
+    for (var i=0; i<=kPosHisLen; i+=10) {
         ctx.moveTo(bx + i, by + scly);
         var len;
         if (!(i % 60)) {
@@ -445,10 +447,10 @@ function DrawPositionHistory()
     ctx.textAlign="right";
     ctx.textBaseline="alphabetic";
     ctx.fillStyle="#444";
-    ctx.fillText("Damper position history:", bx + kHistoryLen/2, 23);
+    ctx.fillText("Damper position history:", bx + kPosHisLen/2, 23);
     for (var i=0; i<3; ++i) {
         ctx.beginPath();
-        var x = bx + kHistoryLen/2 + (i + 1) * 60;
+        var x = bx + kPosHisLen/2 + (i + 1) * 60;
         ctx.moveTo(x, 18);
         ctx.lineTo(x + 20, 18);
         ctx.strokeStyle = damperCol[i];
@@ -456,7 +458,7 @@ function DrawPositionHistory()
         ctx.fillText(damperLbl[i], x - 5, 23);
     }
     ctx.textAlign="center";
-    ctx.fillText("Past time (min)", bx + kHistoryLen/2, by + scly + 35);
+    ctx.fillText("Past time (min)", bx + kPosHisLen/2, by + scly + 35);
     if (!his.length) return;
     for (var i=0; i<3; ++i) {
         var lasty = null;
@@ -518,13 +520,13 @@ function AddToHistory(time, vals)
                 hisTime = time;
                 break;
             }
-            if ((hisTime %= kHistoryLen) == time) break;
+            if ((hisTime %= kPosHisLen) == time) break;
             his.unshift([]);    // pad with nulls
         }
         his.unshift(vals);      // add to history
         // trim history length
-        if (his.length > kHistoryLen) {
-            his.splice(kHistoryLen, his.length - kHistoryLen);
+        if (his.length > kPosHisLen) {
+            his.splice(kPosHisLen, his.length - kPosHisLen);
         }
         needDrawHis = 1;        // redraw history plot
     }
@@ -578,7 +580,7 @@ function ConnectToServer()
                     case 'C':   // console log
                         var log = document.getElementById('log');
                         var lines = log.innerHTML.split('\n');
-                        if (lines.length > 200) lines.shift();
+                        if (lines.length > kLogHisLen) lines.shift();
                         lines.push(msg);
                         log.innerHTML = lines.join('\n');
                         log.scrollTop = log.scrollHeight;

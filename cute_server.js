@@ -15,7 +15,7 @@ const kServerVersion    = 'v0.01';
 
 const kAtmel            = 0x03eb;
 const kEVK1101          = 0x2300;
-const kHistoryLen       = 600;
+const kPosHisLen        = 600;      // position history length
 
 const kBanner = '---- CUTE Cryostat Position Control ' + kServerVersion + ' ----';
 
@@ -181,7 +181,7 @@ wsServer.on('request', function(request) {
 
         // send measurement history (packet "B")
         for (var i=history.length-1; i>=0; --i) {
-            connection.send('B '+((historyTime - i) % kHistoryLen)+' '+
+            connection.send('B '+((historyTime - i) % kPosHisLen)+' '+
                          history[i][0].toFixed(4)+' '+
                          history[i][1].toFixed(4)+' '+
                          history[i][2].toFixed(4), function ack(error) {
@@ -391,7 +391,7 @@ function AddToHistory(i,vals)
         while (historyTime < t) {
             ++historyTime;
             history.unshift([]);
-            if (history.length > kHistoryLen) history.pop();
+            if (history.length > kPosHisLen) history.pop();
         }
         entry = history[0];
     }
@@ -467,7 +467,7 @@ function HandleResponse(avrNum, responseID, msg)
                         // after reading last adc from AVR1
                         if (avrNum) {
                             var t = AddToHistory(0, vals);
-                            BroadcastData('A '+ (t % kHistoryLen)+' '+
+                            BroadcastData('A '+ (t % kPosHisLen)+' '+
                                 vals[0].toFixed(4)+' '+
                                 vals[1].toFixed(4)+' '+
                                 vals[2].toFixed(4)+' '+
