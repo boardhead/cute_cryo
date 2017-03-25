@@ -98,7 +98,7 @@ wsServer.on('request', function(request) {
                 }
                 switch (cmd.toLowerCase()) {
                     case 'help':
-                        this.Respond('Available commands: help, name, who, log, active, avr#');
+                        this.Respond('Available commands: help, name, who, log, active, list, avr#');
                         break;
                     case 'name':
                         if (str.length) {
@@ -109,11 +109,19 @@ wsServer.on('request', function(request) {
                         }
                         break;
                     case 'who':
-                        this.Respond('Current users: ' +
+                        this.Respond('Current users:',
                             conn.map(function(e){
                                 return e.cuteName + (e==this?' (you)':'')
                             },this).join(', '));
                         break;
+                    case 'list': {
+                        var num = 0;
+                        for (var i=0; i<avrs.length; ++i) if (avrs[i]) ++num;
+                        this.Respond(num, 'AVRs connected:');
+                        for (var i=0; i<avrs.length; ++i) {
+                            if (avrs[i]) this.Respond('AVR'+i, avrs[i].avrSN);
+                        }
+                    }   break;
                     case 'active':
                         this.Activate(str);
                         break;
@@ -134,7 +142,7 @@ wsServer.on('request', function(request) {
                                 break;
                             }
                         }
-                        this.Respond('Unknown command: ' + cmd);
+                        this.Respond('Unknown command:', cmd);
                         break;
                 }
             } else if (message.type === 'binary') {
@@ -155,7 +163,7 @@ wsServer.on('request', function(request) {
             this.send(str, function ack(error) { });
         };
         connection.Respond = function () {
-            this.SendData('C '+EscapeHTML(Array.from(arguments).join(' '))+'<br/>');
+            this.SendData('C <span class=res>'+EscapeHTML(Array.from(arguments).join(' '))+'</span><br/>');
         };
         connection.Log = function () {
             Log('['+this.cuteName+'] '+Array.from(arguments).join(' '));
@@ -173,7 +181,7 @@ wsServer.on('request', function(request) {
         });
 
         connection.Respond(kBanner);
-        connection.Respond('(' + foundAVRs + ' AVRs connected)');
+        connection.Respond('(' + foundAVRs, 'AVRs connected)');
 
         connection.Log('Connected');
         // send message indicating whether or not we are active
@@ -258,8 +266,8 @@ function Activate(arg)
 {
     var on = { 'off':0, '0':0, 'on':1, '1':1 }[arg.toLowerCase()];
     if (arg == '' || on == active) {
-        this.Respond('Active control is ' + (on==null ? 'currently' : 'already') +
-            ' ' + (active=='1' ? 'on' : 'off'));
+        this.Respond('Active control is', (on==null ? 'currently' : 'already'),
+            (active=='1' ? 'on' : 'off'));
     } else if (on=='1' || on=='0') {
         active = on;
         BroadcastData('D ' + on);
@@ -409,6 +417,7 @@ function HandleResponse(avrNum, responseID, msg)
     switch (responseID) {
         case 'a':   // a = get serial number
             var avr;
+            avrs[avrNum].avrSN = msg;   // save s/n in device object
             for (var i=0; i<avrSN.length; ++i) {
                 if (msg == avrSN[i]) {
                     avr = 'AVR' + i;
