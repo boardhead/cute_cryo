@@ -73,86 +73,6 @@ wsServer.on('request', function(request) {
     try {
         var connection = request.accept("cute", request.origin);
 
-        // This is the most important callback for us, we'll handle
-        // all messages from users here.
-        connection.on('message', function(message) {
-            var str;
-            // process WebSocket message
-            if (!this.cuteName) {
-                Log('Message from unknown client!');
-                return;
-            }
-            if (message.type === 'utf8') {
-                if (!authorized[GetAddr(this)] && !authorized['*']) {
-                    this.Respond('Sorry, you are not authorized to issue commands');
-                    return;
-                }
-                var i = message.utf8Data.indexOf(':');
-                var cmd;
-                if (i > 0) {
-                    cmd = message.utf8Data.substr(0,i).trim();
-                    str = message.utf8Data.substr(i+1).trim();
-                } else {
-                    cmd = message.utf8Data.trim();
-                    str = '';
-                }
-                switch (cmd.toLowerCase()) {
-                    case 'help':
-                        this.Respond('Available commands: help, name, who, log, active, list, avr#');
-                        break;
-                    case 'name':
-                        if (str.length) {
-                            this.Log('/'+cmd, str);
-                            this.cuteName = str;
-                        } else {
-                            this.Respond('Your name is "'+this.cuteName+'"');
-                        }
-                        break;
-                    case 'who':
-                        this.Respond('Current users:',
-                            conn.map(function(e){
-                                return e.cuteName + (e==this?' (you)':'')
-                            },this).join(', '));
-                        break;
-                    case 'list': {
-                        var num = 0;
-                        for (var i=0; i<avrs.length; ++i) if (avrs[i]) ++num;
-                        this.Respond(num, 'AVRs connected:');
-                        for (var i=0; i<avrs.length; ++i) {
-                            if (avrs[i]) this.Respond('AVR'+i, avrs[i].avrSN);
-                        }
-                    }   break;
-                    case 'active':
-                        this.Activate(str);
-                        break;
-                    case 'log':
-                        this.Log(str);
-                        break;
-                    default:
-                        // handle AVR commands
-                        if (cmd.length==4 && cmd.substr(0,3).toLowerCase() == 'avr') {
-                            var n = cmd.substr(3,1);
-                            if (!isNaN(n)) {
-                                this.Log('/'+cmd, str);
-                                if (avrs[n]) {
-                                    avrs[n].SendToAVR('e.'+str.trim().toLowerCase()+'\n');
-                                } else {
-                                    this.Log('AVR'+n,'is not connected');
-                                }
-                                break;
-                            }
-                        }
-                        this.Respond('Unknown command:', cmd);
-                        break;
-                }
-            } else if (message.type === 'binary') {
-                // handle binary data here (message.binaryData)
-                this.Respond("Received binary data length=" + message.binaryData.length);
-            } else {
-                this.Respond('Received unknown message type=' + message.type);
-            }
-        });
-
         // add new connection to our list
         conn[conn.length] = connection;
         connection.cuteName = GetAddr(request);
@@ -168,6 +88,12 @@ wsServer.on('request', function(request) {
         connection.Log = function () {
             Log('['+this.cuteName+'] '+Array.from(arguments).join(' '));
         };
+        connection.HandleServerCommand = HandleServerCommand;
+
+        // handle all messages from users here
+        connection.on('message', function(message) {
+            this.HandleServerCommand(message);
+        });
 
         connection.on('close', function(reason) {
             // close user connection
@@ -252,11 +178,93 @@ function GetAddr(sock)
 }
 
 //-----------------------------------------------------------------------------
-// Send data to all http clients
-function BroadcastData(str)
+// Push data to all http clients
+function PushData(str)
 {
     for (var i=0; i<conn.length; ++i) {
         conn[i].SendData(str);
+    }
+}
+
+//-----------------------------------------------------------------------------
+// Handle commands sent from our clients
+// Inputs: this=WebSocketServer, message=message
+function HandleServerCommand(message)
+{
+    var str;
+    // process WebSocket message
+    if (!this.cuteName) {
+        Log('Message from unknown client!');
+        return;
+    }
+    if (message.type === 'utf8') {
+        if (!authorized[GetAddr(this)] && !authorized['*']) {
+            this.Respond('Sorry, you are not authorized to issue commands');
+            return;
+        }
+        var i = message.utf8Data.indexOf(':');
+        var cmd;
+        if (i > 0) {
+            cmd = message.utf8Data.substr(0,i).trim();
+            str = message.utf8Data.substr(i+1).trim();
+        } else {
+            cmd = message.utf8Data.trim();
+            str = '';
+        }
+        switch (cmd.toLowerCase()) {
+            case 'help':
+                this.Respond('Available commands: help, name, who, log, active, list, avr#');
+                break;
+            case 'name':
+                if (str.length) {
+                    this.Log('/'+cmd, str);
+                    this.cuteName = str;
+                } else {
+                    this.Respond('Your name is "'+this.cuteName+'"');
+                }
+                break;
+            case 'who':
+                this.Respond('Current users:',
+                    conn.map(function(e){
+                        return e.cuteName + (e==this?' (you)':'')
+                    },this).join(', '));
+                break;
+            case 'list': {
+                var num = 0;
+                for (var i=0; i<avrs.length; ++i) if (avrs[i]) ++num;
+                this.Respond(num, 'AVRs connected:');
+                for (var i=0; i<avrs.length; ++i) {
+                    if (avrs[i]) this.Respond('AVR'+i, avrs[i].avrSN);
+                }
+            }   break;
+            case 'active':
+                this.Activate(str);
+                break;
+            case 'log':
+                this.Log(str);
+                break;
+            default:
+                // handle AVR commands
+                if (cmd.length==4 && cmd.substr(0,3).toLowerCase() == 'avr') {
+                    var n = cmd.substr(3,1);
+                    if (!isNaN(n)) {
+                        this.Log('/'+cmd, str);
+                        if (avrs[n]) {
+                            avrs[n].SendToAVR('e.'+str.trim().toLowerCase()+'\n');
+                        } else {
+                            this.Log('AVR'+n,'is not connected');
+                        }
+                        break;
+                    }
+                }
+                this.Respond('Unknown command:', cmd);
+                break;
+        }
+    } else if (message.type === 'binary') {
+        // handle binary data here (message.binaryData)
+        this.Respond("Received binary data length=" + message.binaryData.length);
+    } else {
+        this.Respond('Received unknown message type=' + message.type);
     }
 }
 
@@ -270,7 +278,7 @@ function Activate(arg)
             (active=='1' ? 'on' : 'off'));
     } else if (on=='1' || on=='0') {
         active = on;
-        BroadcastData('D ' + on);
+        PushData('D ' + on);
         this.Log('Position control', active==1 ? 'activated' : 'deactivated');
     } else {
         this.Respond('Invalid argument for "active" command');
@@ -476,7 +484,7 @@ function HandleResponse(avrNum, responseID, msg)
                         // after reading last adc from AVR1
                         if (avrNum) {
                             var t = AddToHistory(0, vals);
-                            BroadcastData('A '+ (t % kPosHisLen)+' '+
+                            PushData('A '+ (t % kPosHisLen)+' '+
                                 vals[0].toFixed(4)+' '+
                                 vals[1].toFixed(4)+' '+
                                 vals[2].toFixed(4)+' '+
@@ -558,7 +566,7 @@ function Log()
         if (error) console.log(error, 'writing log file');
     });
     // send back to clients
-    BroadcastData('C ' +  EscapeHTML(msg) + '<br/>');
+    PushData('C ' +  EscapeHTML(msg) + '<br/>');
 }
 
 //-----------------------------------------------------------------------------
