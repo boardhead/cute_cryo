@@ -1,0 +1,3 @@
+#!/bin/sh
+nohup node cute_server.js >/dev/null 2>cute_cerver.err &
+
