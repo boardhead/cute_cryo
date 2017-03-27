@@ -45,6 +45,8 @@ var flashNum = flashPin.length - 1;
 var flashTime = 0;
 
 var vals = [0,0,0];     // most recent measured values
+var motorSpd = [0,0,0]; // motor speeds
+var motorPos = [0,0,0]; // motor positions
 var history = [];       // history of measured values
 var historyTime = -1;   // time of most recent history entry
 
@@ -158,12 +160,20 @@ FindAVRs();     // find all connected AVR boards
 intrvl = setInterval(function() {
     for (var i=0; i<avrs.length; ++i) {
         if (avrs[i] == null) continue;
-        if (i < 2) {
-            avrs[i].SendToAVR("d.adc2;d.adc3\n");
-        } else {
-            // re-send "ser" command in case it was missed
-            avrs[i].SendToAVR("a.ser;b.ver;c.wdt 1\n");
+        var cmd;
+        switch (i) {
+            case 0: // AVR0
+                cmd = "d.adc2;adc3;f.m0;m1;m2\n";
+                break;
+            case 1: // AVR1
+                cmd = "d.adc2;adc3\n";
+                break;
+            default:
+                // re-send "ser" command in case it was missed
+                cmd = "a.ser;b.ver\n";
+                break;
         }
+        avrs[i].SendToAVR(cmd);
     }
 }, 100);
 
@@ -322,7 +332,7 @@ function OpenAVR(device)
                     ForgetAVR(this);
                 }
             };
-            device.SendToAVR("a.ser;b.ver;c.wdt 1\n");
+            device.SendToAVR("a.ser;b.ver\n");
             break;
         }
     }
@@ -373,19 +383,18 @@ function HandleData(data)
         if (!str.length) continue;
         if (str.length >= 4 && str.substr(1,1) == '.') {
             id = str.substr(0,1);
-            if (id == 'e') {
-                str = str.substr(2);    // only remove command ID from 'e' response
-            } else {                
-                if (str.substr(2,2) != 'OK') {
-                //  Log('AVR'+avrNum, 'Bad response:', str);
-                    continue;
-                }
-                str = str.length > 5 ? str.substr(5) : '';
-            }
-        } else if (id != 'e') { // ('e' responses may be multi-line)
-        //  Log('AVR'+avrNum, 'Unknown response:', str);
-            continue;
+            str = str.substr(2);
         }
+        if (id != 'e') {
+            if (str.substr(0,2) != 'OK') {
+            //  Log('AVR'+avrNum, 'Bad response:', str);
+                continue;
+            }
+            str = str.substr(3);
+        }
+        // ignore truncated responses (may happen at startup if commands
+        // were sent before AVR was fully initialized)
+        if (!id) continue;
         avrNum = HandleResponse(avrNum, id, str);
     }
 }
@@ -412,7 +421,7 @@ function AddToHistory(i,vals)
         entry = history[0];
     }
     for (var j=0; j<vals.length; ++j) {
-        entry[j+i] = Number(vals[j]);
+        entry[j+i] = vals[j];
     }
     return t;
 }
@@ -456,7 +465,9 @@ function HandleResponse(avrNum, responseID, msg)
                     break;
                 }
             }
-            if (!avr) {
+            if (avr) {
+                avrs[avrNum].SendToAVR('c.wdt 1\n');  // enable watchdog timer
+            } else {
                 avr = 'Unknown AVR ' + avrNum;
                 avrs[avrNum].SendToAVR('z.wdt 0\n');  // disable watchdog on unknown AVR
             }
@@ -509,6 +520,24 @@ function HandleResponse(avrNum, responseID, msg)
         case 'e':   // e = manual AVR command
             Log('[AVR'+avrNum+']', msg);
             break;
+
+        case 'f': { // f = motor speeds
+            if (msg.length >= 8 && msg.substr(0,1) == 'm') {
+                var n = msg.substr(1,1);    // motor number
+                var a = msg.split(' ');
+                for (var i=0; i<a.length; ++i) {
+                    switch (a[i].substr(0,4)) {
+                        case "SPD=":
+                            motorSpd[n] = Number(a[i].substr(4));
+                            break;
+                        case "POS=":
+                            motorPos[n] = Number(a[i].substr(4));
+                            break;
+                    }
+                }
+                if (n==2) PushData('E ' + motorSpd.join(' '));
+            }
+        }   break;
 
         case 'z':   // z = disable watchdog timer
             // forget about the unknown AVR

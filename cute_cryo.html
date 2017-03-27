@@ -301,7 +301,7 @@ function DrawDamperLoads(vals)
     ctx.fillText("Add weights (kg)", cx[kCanLod]/2, cy[kCanLod]-20);
     if (vals) {
         for (var i=0; i<3; ++i) {
-            vals[i] = loadNom - (Number(vals[i]) - dl);
+            vals[i] = loadNom - (vals[i] - dl);
         }
     }
     DrawIndicators(kCanLod, vals, -loadNom, loadNom*2, loadNom, loadTol, 2, 10, 0);
@@ -345,7 +345,7 @@ function DrawIndicators(cnum, vals, min, rng, nom, tol, tick, lbl, dec)
         if (!vals) continue;
         // draw triangle indicator
         ctx.fillStyle=gradient;
-        var val = Number(vals[i]);
+        var val = vals[i];
         var f = val - min;
         if (f < 0) f = 0;
         else if (f > rng) f = rng;
@@ -561,8 +561,8 @@ function ConnectToServer()
                 var msg = message.data.substr(2);
                 switch (c) {
                     case 'A': { // damper positions
-                        var v = msg.split(' ');
-                        var t = Number(v.shift());
+                        var v = msg.split(' ').map(Number);
+                        var t = v.shift();
                         DrawDamperPositions(v);
                         AddToHistory(t, v);
                         // draw history plot if necessary
@@ -573,8 +573,8 @@ function ConnectToServer()
                     } break;
 
                     case 'B': { // history
-                        var v = msg.split(' ');
-                        var t = Number(v.shift());
+                        var v = msg.split(' ').map(Number);
+                        var t = v.shift();
                         AddToHistory(t, v);
                     } break;
 
@@ -589,8 +589,10 @@ function ConnectToServer()
 
                     case 'D': { // system active/inactive
                         Activate(msg,1);  // update active state
-                        DrawSpeeds(active==1 ? [100,0,-40] : [0,0,0]); //TEST
+                    } break;
 
+                    case 'E': { // motor speeds
+                        DrawSpeeds(msg.split(' ').map(Number));
                     } break;
                 }
             };
