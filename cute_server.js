@@ -171,6 +171,9 @@ intrvl = setInterval(function() {
                 break;
             default:
                 // re-send "ser" command in case it was missed
+                // (send even if we already got the "ser" response
+                // because that should have triggered a "z" which
+                // would need to be re-sent if we arrived here)
                 cmd = "a.ser;b.ver\n";
                 break;
         }
@@ -217,14 +220,14 @@ function HandleServerCommand(message)
         var i = message.utf8Data.indexOf(':');
         var cmd;
         if (i > 0) {
-            cmd = message.utf8Data.substr(0,i).trim();
+            cmd = message.utf8Data.substr(0,i).trim().toLowerCase();
             str = message.utf8Data.substr(i+1).trim();
         } else {
-            cmd = message.utf8Data.trim();
+            cmd = message.utf8Data.trim().toLowerCase();
             str = '';
         }
         // process the command
-        switch (cmd.toLowerCase()) {
+        switch (cmd) {
             case 'help':
                 this.Respond('Available commands: help, name, who, log, active, list, avr#');
                 break;
@@ -258,7 +261,7 @@ function HandleServerCommand(message)
                 break;
             default:
                 // check for AVR commands
-                if (cmd.length==4 && cmd.substr(0,3).toLowerCase() == 'avr') {
+                if (cmd.length==4 && cmd.substr(0,3) == 'avr') {
                     var n = cmd.substr(3,1);
                     if (!isNaN(n)) {
                         this.Log('/'+cmd, str);
@@ -316,17 +319,19 @@ function Log()
 {
     var msg;
     var d = new Date();
-    var date = d.getFullYear() + '-' + Pad2(d.getMonth()+1) + '-' + Pad2(d.getDate());
     if (arguments.length) {
-        msg = date + ' ' + Pad2(d.getHours()) + ':' + Pad2(d.getMinutes()) + ':' +
+        msg = d.getFullYear() + '-' + Pad2(d.getMonth()+1) + '-' + Pad2(d.getDate()) + ' ' +
+                Pad2(d.getHours()) + ':' + Pad2(d.getMinutes()) + ':' +
                 Pad2(d.getSeconds()) + ' ' + Array.from(arguments).join(' ');
     } else {
         msg = '';
     }
     console.log(msg);
-    fs.appendFile('cute_server_'+date+'.log', msg + '\n', function(error) {
-        if (error) console.log(error, 'writing log file');
-    });
+    fs.appendFile('cute_server_'+d.getFullYear()+Pad2(d.getMonth()+1)+'.log', msg+'\n', 
+        function(error) {
+            if (error) console.log(error, 'writing log file');
+        }
+    );
     // send back to clients
     PushData('C ' +  EscapeHTML(msg) + '<br/>');
 }
