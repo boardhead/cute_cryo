@@ -174,7 +174,7 @@ intrvl = setInterval(function() {
                 cmd = "a.ser;b.ver\n";
                 break;
         }
-        avrs[i].SendToAVR(cmd);
+        avrs[i].SendCmd(cmd);
     }
 }, 100);
 
@@ -213,6 +213,7 @@ function HandleServerCommand(message)
             this.Respond('Sorry, you are not authorized to issue commands');
             return;
         }
+        // separate command from its optional argument (command ends with ":")
         var i = message.utf8Data.indexOf(':');
         var cmd;
         if (i > 0) {
@@ -222,6 +223,7 @@ function HandleServerCommand(message)
             cmd = message.utf8Data.trim();
             str = '';
         }
+        // process the command
         switch (cmd.toLowerCase()) {
             case 'help':
                 this.Respond('Available commands: help, name, who, log, active, list, avr#');
@@ -255,13 +257,13 @@ function HandleServerCommand(message)
                 this.Log(str);
                 break;
             default:
-                // handle AVR commands
+                // check for AVR commands
                 if (cmd.length==4 && cmd.substr(0,3).toLowerCase() == 'avr') {
                     var n = cmd.substr(3,1);
                     if (!isNaN(n)) {
                         this.Log('/'+cmd, str);
                         if (avrs[n]) {
-                            avrs[n].SendToAVR('e.'+str.trim().toLowerCase()+'\n');
+                            avrs[n].SendCmd('e.'+str.trim().toLowerCase()+'\n');
                         } else {
                             this.Log('AVR'+n,'is not connected');
                         }
@@ -297,6 +299,53 @@ function Activate(arg)
 }
 
 //-----------------------------------------------------------------------------
+// Escape string for HTML
+function EscapeHTML(str)
+{
+    var entityMap = {
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;"
+    };
+    return str.replace(/[&<>]/g, function (s) { return entityMap[s]; });
+}
+
+//-----------------------------------------------------------------------------
+// Log message to console and file
+function Log()
+{
+    var msg;
+    var d = new Date();
+    var date = d.getFullYear() + '-' + Pad2(d.getMonth()+1) + '-' + Pad2(d.getDate());
+    if (arguments.length) {
+        msg = date + ' ' + Pad2(d.getHours()) + ':' + Pad2(d.getMinutes()) + ':' +
+                Pad2(d.getSeconds()) + ' ' + Array.from(arguments).join(' ');
+    } else {
+        msg = '';
+    }
+    console.log(msg);
+    fs.appendFile('cute_server_'+date+'.log', msg + '\n', function(error) {
+        if (error) console.log(error, 'writing log file');
+    });
+    // send back to clients
+    PushData('C ' +  EscapeHTML(msg) + '<br/>');
+}
+
+//-----------------------------------------------------------------------------
+// Enumerate USB devices to locate our AVR boards
+function FindAVRs()
+{
+    var devs = usb.getDeviceList();
+    for (var i=0; i<devs.length; ++i) {
+        if (devs[i].deviceDescriptor.idVendor  == kAtmel &&
+            devs[i].deviceDescriptor.idProduct == kEVK1101)
+        {
+            OpenAVR(devs[i]);
+        }
+    }
+}
+
+//-----------------------------------------------------------------------------
 // Open communication with our AVR device
 function OpenAVR(device)
 {
@@ -319,7 +368,9 @@ function OpenAVR(device)
             endIn.startPoll(4, 256);
             endIn.on('data', HandleData);
             endIn.on('error', HandleError);
-            device.SendToAVR = function SendToAVR(cmd) {
+
+            // add member function to send command to AVR
+            device.SendCmd = function SendCmd(cmd) {
                 try {
                     this.interfaces[0].endpoints[1].transfer(cmd, function(error) {
                         if (error) {
@@ -333,7 +384,8 @@ function OpenAVR(device)
                     ForgetAVR(this);
                 }
             };
-            device.SendToAVR("a.ser;b.ver\n");
+            // send initial command to get AVR serial number and software version
+            device.SendCmd("a.ser;b.ver\n");
             break;
         }
     }
@@ -364,7 +416,7 @@ function HandleError(err)
 }
 
 //-----------------------------------------------------------------------------
-// Receive data from our AVR devices
+// Handle data received from our AVR devices
 function HandleData(data)
 {
     var avrNum = this.avrNum;
@@ -398,33 +450,6 @@ function HandleData(data)
         if (!id) continue;
         avrNum = HandleResponse(avrNum, id, str);
     }
-}
-
-//-----------------------------------------------------------------------------
-// Add to history of measurements
-// Inputs: index/value pairs
-// Returns: integer time of measurement
-function AddToHistory(i,vals)
-{
-    var d = new Date();
-    var t = Math.ceil(d.getTime()/1000);
-    var entry;
-    if (!history.length) {
-        entry = history[0] = [];
-        historyTime = t;
-    } else {
-        // add entries up to this time if necessary
-        while (historyTime < t) {
-            ++historyTime;
-            history.unshift([]);
-            if (history.length > kPosHisLen) history.pop();
-        }
-        entry = history[0];
-    }
-    for (var j=0; j<vals.length; ++j) {
-        entry[j+i] = vals[j];
-    }
-    return t;
 }
 
 //-----------------------------------------------------------------------------
@@ -467,10 +492,10 @@ function HandleResponse(avrNum, responseID, msg)
                 }
             }
             if (avr) {
-                avrs[avrNum].SendToAVR('c.wdt 1\n');  // enable watchdog timer
+                avrs[avrNum].SendCmd('c.wdt 1\n');  // enable watchdog timer
             } else {
                 avr = 'Unknown AVR ' + avrNum;
-                avrs[avrNum].SendToAVR('z.wdt 0\n');  // disable watchdog on unknown AVR
+                avrs[avrNum].SendCmd('z.wdt 0\n');  // disable watchdog on unknown AVR
             }
             Log(avr, 'attached (s/n', msg + ')');
             break;
@@ -507,7 +532,7 @@ function HandleResponse(avrNum, responseID, msg)
                                 var cmd = "c."+flashPin[flashNum]+" 1;c."+
                                                flashPin[flashNew]+" 0\n";
                                 for (var i=0; i<2; ++i) {
-                                    if (avrs[i]) avrs[i].SendToAVR(cmd);
+                                    if (avrs[i]) avrs[i].SendCmd(cmd);
                                 }
                                 flashNum = flashNew;
                                 flashTime = t;
@@ -559,50 +584,30 @@ function HandleResponse(avrNum, responseID, msg)
 }
 
 //-----------------------------------------------------------------------------
-// Enumerate USB devices to locate our AVR boards
-function FindAVRs()
+// Add to history of measurements
+// Inputs: index/value pairs
+// Returns: integer time of measurement
+function AddToHistory(i,vals)
 {
-    var devs = usb.getDeviceList();
-    for (var i=0; i<devs.length; ++i) {
-        if (devs[i].deviceDescriptor.idVendor  == kAtmel &&
-            devs[i].deviceDescriptor.idProduct == kEVK1101)
-        {
-            OpenAVR(devs[i]);
-        }
-    }
-}
-
-//-----------------------------------------------------------------------------
-// Escape string for HTML
-function EscapeHTML(str)
-{
-    var entityMap = {
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;"
-    };
-    return str.replace(/[&<>]/g, function (s) { return entityMap[s]; });
-}
-
-//-----------------------------------------------------------------------------
-// Log message to console and file
-function Log()
-{
-    var msg;
     var d = new Date();
-    var date = d.getFullYear() + '-' + Pad2(d.getMonth()+1) + '-' + Pad2(d.getDate());
-    if (arguments.length) {
-        msg = date + ' ' + Pad2(d.getHours()) + ':' + Pad2(d.getMinutes()) + ':' +
-                Pad2(d.getSeconds()) + ' ' + Array.from(arguments).join(' ');
+    var t = Math.ceil(d.getTime()/1000);
+    var entry;
+    if (!history.length) {
+        entry = history[0] = [];
+        historyTime = t;
     } else {
-        msg = '';
+        // add entries up to this time if necessary
+        while (historyTime < t) {
+            ++historyTime;
+            history.unshift([]);
+            if (history.length > kPosHisLen) history.pop();
+        }
+        entry = history[0];
     }
-    console.log(msg);
-    fs.appendFile('cute_server_'+date+'.log', msg + '\n', function(error) {
-        if (error) console.log(error, 'writing log file');
-    });
-    // send back to clients
-    PushData('C ' +  EscapeHTML(msg) + '<br/>');
+    for (var j=0; j<vals.length; ++j) {
+        entry[j+i] = vals[j];
+    }
+    return t;
 }
 
 //-----------------------------------------------------------------------------
