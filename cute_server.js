@@ -115,19 +115,16 @@ wsServer.on('request', function(request) {
         connection.Log('Connected');
 
         // send message indicating whether or not we are active
-        connection.send('D ' + active, function ack(error) { });
+        connection.SendData('D ' + active);
         // send current motor state
-        connection.send('E ' + lastSpd, function ack(error) { });
+        connection.SendData('E ' + lastSpd);
 
         // send measurement history (packet "B")
         for (var i=history.length-1; i>=0; --i) {
-            connection.send('B '+((historyTime - i) % kPosHisLen)+' '+
+            connection.SendData('B '+((historyTime - i) % kPosHisLen)+' '+
                          history[i][0].toFixed(4)+' '+
                          history[i][1].toFixed(4)+' '+
-                         history[i][2].toFixed(4), function ack(error) {
-                // If error is not defined, the send has been completed,
-                // otherwise the error object will indicate what failed.
-            });
+                         history[i][2].toFixed(4));
         }
     }
     catch (err) {
