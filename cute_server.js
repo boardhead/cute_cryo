@@ -46,6 +46,7 @@ var flashTime = 0;
 
 var vals = [0,0,0];     // most recent measured values
 var motorSpd = [0,0,0]; // motor speeds
+var lastSpd = '0 0 0';  // last motor speeds sent to clients (as string)
 var motorPos = [0,0,0]; // motor positions
 var history = [];       // history of measured values
 var historyTime = -1;   // time of most recent history entry
@@ -79,8 +80,8 @@ wsServer.on('request', function(request) {
         conn[conn.length] = connection;
         connection.cuteName = GetAddr(request);
 
-        // define a few convenience functions
-        connection.Activate = function (str) { Activate.call(this,str); };
+        // define a few member functions
+        connection.Activate = Activate;
         connection.SendData = function (str) {
             this.send(str, function ack(error) { });
         };
@@ -112,8 +113,11 @@ wsServer.on('request', function(request) {
         connection.Respond('(' + foundAVRs, 'AVRs connected)');
 
         connection.Log('Connected');
+
         // send message indicating whether or not we are active
         connection.send('D ' + active, function ack(error) { });
+        // send current motor state
+        connection.send('E ' + lastSpd, function ack(error) { });
 
         // send measurement history (packet "B")
         for (var i=history.length-1; i>=0; --i) {
@@ -535,7 +539,13 @@ function HandleResponse(avrNum, responseID, msg)
                             break;
                     }
                 }
-                if (n==2) PushData('E ' + motorSpd.join(' '));
+                if (n==2) {
+                    var newSpd = motorSpd.join(' ');
+                    if (lastSpd != newSpd) {
+                        PushData('E ' + newSpd);
+                        lastSpd = newSpd;
+                    }
+                }
             }
         }   break;
 
