@@ -16,19 +16,28 @@ const kServerVersion    = 'v0.01';
 const kAtmel            = 0x03eb;
 const kEVK1101          = 0x2300;
 const kPosHisLen        = 600;      // position history length
+const kNumLimit         = 2;        // number of limit switches
 
 const kBanner = '---- CUTE Cryostat Position Control ' + kServerVersion + ' ----';
 
 var avrSN = [
-    'ffffffff3850313339302020ff0d0b',   // AVR0
-    'ffffffff3850313339302020ff1011'    // AVR1
+    'ffffffff3850313339302020ff1011',   // AVR0
+    'ffffffff3850313339302020ff0d0b'    // AVR1
 ];
+
+// ADAM-6017 data acquisition module
+var adamIP = "130.15.24.85";
+var adamPort = 502;
 
 var authorized = {
     '*' : 1, // (uncomment this to allow commands from any IP)
     'localhost' : 1,
     '130.15.24.88' : 1
 };
+
+var adam;               // client for communicating with ADAM-6017
+var adamValue = [ ];    // Adam ADC values (x8)
+var adamState = 0;      // -1=bad, 0=not connected, 1=missed response, 2=waiting response, 3=got response
 
 var usb = require('usb');
 var fs = require('fs');
@@ -44,14 +53,21 @@ var flashPin = ['pa07','pa08','pa21','pa08'];   // sequence to flash LED's
 var flashNum = flashPin.length - 1;
 var flashTime = 0;
 
-var vals = [0,0,0];     // most recent measured values
-var motorSpd = [0,0,0]; // motor speeds
-var lastSpd = '0 0 0';  // last motor speeds sent to clients (as string)
-var motorPos = [0,0,0]; // motor positions
-var history = [];       // history of measured values
-var historyTime = -1;   // time of most recent history entry
+var vals = [0,0,0];         // most recent measured values
+var motorSpd = [0,0,0];     // motor speeds
+var limitSwitch = [0,0,0,0,0,0,0];   // limit-switch values (1=open)
+var lastSpd = '0 0 0';      // last motor speeds sent to clients (as string)
+var motorPos = [0,0,0];     // motor positions
+var history = [];           // history of measured values
+var historyTime = -1;       // time of most recent history entry
 
-var intrvl;             // interval timer for polling hardware
+var intrvl;                 // interval timer for polling hardware
+var fullPoll = 0;
+var verbose = 0;
+
+var damperPosition = [-1,-1,-1];    // positions of the 3 dampers (mm)
+var damperAddWeight = [0, 0, 0];    // weight to add to the 3 dampers (kg)
+var airPressure = 1013;             // measured air pressure (hPa)
 
 //-----------------------------------------------------------------------------
 // Main script
@@ -155,19 +171,56 @@ usb.on('detach', ForgetAVR);
 Log();
 Log(kBanner);
 
+ConnectToAdam();
 FindAVRs();     // find all connected AVR boards
 
 // poll the hardware periodically
-intrvl = setInterval(function() {
+intrvl = setInterval(function()
+{
+    fullPoll = !fullPoll;
+
+    if (adamState != 3) {
+        // send empty ADC readings if Adam didn't respond
+        if (fullPoll) {
+            var t = AddToHistory(0);
+            PushData('F ' + (t % kPosHisLen));
+        }
+        if (!adam) ConnectToAdam();
+    }
+
+    // poll ADAM-6017
+    if (adamState >= 2) {
+        // send command to read all 8 ADC's
+        // 0x01, 0x00 = transaction ID = 0
+        // 0x00, 0x00 = protocol ID = 0
+        // 0x00, 0x06 = message length = 6 bytes to follow
+        // 0x01       = unit ID = 1
+        // 0x04       = function code = 4 (read input registers)
+        // 0x00, 0x00 = address of first register = 0 (+ 0x4000)
+        // 0x00, 0x08 = number of registers to read = 8 (16 bytes)
+        if (!adam.write('010000000006010400000008', 'hex')) {
+            Log("Adam write error");
+        }
+        if (adamState == 3) {
+            adamState = 2;
+        } else if (adamState == 2) {
+            adamState = 1;
+            Log("Adam not responding");
+        }
+    } else if (adamState == 0) {
+        Log("Adam not connected!");
+        adamState = -1;
+    }
+
     for (var i=0; i<avrs.length; ++i) {
         if (avrs[i] == null) continue;
         var cmd;
         switch (i) {
             case 0: // AVR0
-                cmd = "d.adc2;adc3;f.m0;m1;m2\n";
+                cmd = "f.m0;m1;m2;g.pa0-" + (kNumLimit-1) + "\n";   // poll limit switches
                 break;
             case 1: // AVR1
-                cmd = "d.adc2;adc3\n";
+                cmd = "c.nop\n";    // (nothing to do yet)
                 break;
             default:
                 // re-send "ser" command in case it was missed
@@ -179,7 +232,94 @@ intrvl = setInterval(function() {
         }
         avrs[i].SendCmd(cmd);
     }
-}, 100);
+}, 80);
+
+//-----------------------------------------------------------------------------
+// Connect to ADAM-6017
+function ConnectToAdam()
+{
+    var net = require('net');
+    adam = new net.Socket();
+
+    // handle connect message
+    adam.connect(adamPort, adamIP, function() {
+        adamState = 3;
+        Log('Adam attached');
+    });
+    
+    // handle incoming data from the ADAM-6017
+    adam.on('data', function(data) {
+        if (data.length == 25) {
+            if (adamState == 1) Log("Adam OK");
+            adamState = 3;
+            // read the returned values
+            for (var i=0; i<8; ++i) {
+                var j = i * 2 + 9;
+                adamValue[i] = data[i*2+9] * 256 + data[j+1];
+            }
+            if (verbose) Log("Adam values:", adamValue.join(' '));
+            
+            Calculate();            // calculate damper positions, loads, etc
+            if (active) Drive();    // drive motors if active control is on
+
+            if (fullPoll) {
+                // save in history and send data back to http clients
+                var t = AddToHistory(0, damperPosition);
+                PushData('F ' + (t % kPosHisLen) + ' ' +
+                         damperPosition.map( function(x) { return x.toFixed(4); } ).join(' ') + ' ' +
+                         damperAddWeight.map( function(x) { return x.toFixed(4); } ).join(' ') + ' ' +
+                         airPressure.toFixed(1));
+                // flash some LED's for the fun of it
+                if (t != flashTime) {
+                    var flashNew = (flashNum + 1) % flashPin.length;
+                    var cmd = "c."+flashPin[flashNum]+" 1;c."+
+                                   flashPin[flashNew]+" 0\n";
+                    for (var i=0; i<2; ++i) {
+                        if (avrs[i]) avrs[i].SendCmd(cmd);
+                    }
+                    flashNum = flashNew;
+                    flashTime = t;
+                }
+            }
+        }
+    });
+
+    // handle connection close
+    adam.on('close', function() {
+        adamState = -1;
+        if (adam) {
+            adam.destroy();
+            adam = null;
+        }
+    });
+
+    // handle communication errors
+    adam.on('error', function() {
+        if (adamState == 0) {
+            Log("Adam communication error");
+            adamState = -1;
+        }
+        if (adam) {
+            adam.destroy();
+            adam = null;
+        }
+    });
+}
+
+//-----------------------------------------------------------------------------
+// Calculate damper positions, loads, etc
+function Calculate()
+{
+    for (var i=0; i<3; ++i) {
+        damperPosition[i] = (adamValue[i] - 0x8000) / 0x10000 * 28 + 11.8;
+    }
+}
+
+//-----------------------------------------------------------------------------
+// Drive motors for active position control
+function Drive()
+{
+}
 
 //-----------------------------------------------------------------------------
 // Get client address
@@ -229,7 +369,7 @@ function HandleServerCommand(message)
         // process the command
         switch (cmd) {
             case 'help':
-                this.Respond('Available commands: help, name, who, log, active, list, avr#');
+                this.Respond('Available commands: help, name, who, log, active, list, verbose, avr#');
                 break;
             case 'name':
                 if (str.length) {
@@ -237,6 +377,18 @@ function HandleServerCommand(message)
                     this.cuteName = str;
                 } else {
                     this.Respond('Your name is "'+this.cuteName+'"');
+                }
+                break;
+            case 'verbose':
+                if (str.length) {
+                    if (str.toLowerCase() == 'on') {
+                        verbose = 1;
+                    } else {
+                        verbose = 0;
+                    }
+                    this.Log('Verbose', verbose ? 'on' : 'off');
+                } else {
+                    this.Respond('Verbose', verbose ? 'on' : 'off');
                 }
                 break;
             case 'who':
@@ -497,7 +649,9 @@ function HandleResponse(avrNum, responseID, msg)
                 }
             }
             if (avr) {
-                avrs[avrNum].SendCmd('c.wdt 1\n');  // enable watchdog timer
+                // 1. enable watchdog timer
+                // 2. seand set up avr
+                avrs[avrNum].SendCmd('c.wdt 1;m0 on +;pa0-1 ++\n');
             } else {
                 avr = 'Unknown AVR ' + avrNum;
                 avrs[avrNum].SendCmd('z.wdt 0\n');  // disable watchdog on unknown AVR
@@ -514,38 +668,11 @@ function HandleResponse(avrNum, responseID, msg)
 
         case 'd':   // d = handle ADC read responses
             var j = msg.indexOf('VAL=');
-            if (j >= 0) {
-                // ie. "adc2 512"
-                switch (msg.substr(3,1)) {
-                    case '2':
-                        vals[avrNum*2] = msg.substr(j+4) / 900;
-                        break;
-                    case '3':
-                        vals[avrNum*2+1] = msg.substr(j+4) / 545;
-                        // save in history and send data back to http clients
-                        // after reading last adc from AVR1
-                        if (avrNum) {
-                            var t = AddToHistory(0, vals);
-                            PushData('A '+ (t % kPosHisLen)+' '+
-                                vals[0].toFixed(4)+' '+
-                                vals[1].toFixed(4)+' '+
-                                vals[2].toFixed(4)+' '+
-                                vals[3].toFixed(4));
-                            // flash some LED's for the fun of it
-                            if (t != flashTime) {
-                                var flashNew = (flashNum + 1) % flashPin.length;
-                                var cmd = "c."+flashPin[flashNum]+" 1;c."+
-                                               flashPin[flashNew]+" 0\n";
-                                for (var i=0; i<2; ++i) {
-                                    if (avrs[i]) avrs[i].SendCmd(cmd);
-                                }
-                                flashNum = flashNew;
-                                flashTime = t;
-                            }
-                        }
-                        break;
-                }
-            }
+            // (currently not used)
+            //if (j >= 0) {
+            //    // ie. "adc2 512"
+            //    var adcVal[msg.substr(3,1).Number()] = msg.substr(j+4).Number();
+            //}
             break;
 
         case 'e':   // e = manual AVR command
@@ -566,7 +693,7 @@ function HandleResponse(avrNum, responseID, msg)
                             break;
                     }
                 }
-                if (n==2) {
+                if (n==2 && fullPoll) {
                     var newSpd = motorSpd.join(' ');
                     if (lastSpd != newSpd) {
                         PushData('E ' + newSpd);
@@ -575,6 +702,35 @@ function HandleResponse(avrNum, responseID, msg)
                 }
             }
         }   break;
+
+        case 'g': { // g = poll limit switches
+            var j = msg.indexOf('VAL=');
+            if (j < 0 || msg.length - j < kNumLimit) {
+                avrs[0].SendCmd("halt\n");
+                Log("Poll error.  Motors halted");
+                for (var k=0; k<kNumLimit; ++k) {
+                    limitSwitch[k] = 0;
+                }
+            } else {
+                for (var k=0; k<kNumLimit; ++k) {
+                    if (msg.substr(j+4+k, 1) == '1') {
+                        limitSwitch[k] = 1;
+                    } else {
+                        limitSwitch[k] = 0;
+                        var mot = Math.floor(k / 2);
+                        if (!motorSpd[mot]) continue;
+                        // odd-numbered switches are lower limits
+                        if (k & 0x01) {
+                            if (motorSpd[mot] > 0) continue;
+                        } else {
+                            if (motorSpd[mot] < 0) continue;
+                        }
+                        avrs[0].SendCmd("m" + mot + " halt\n");
+                        Log("M" + mot + " halted! (hit " + (k & 0x01 ? "lower" : "upper") + " limit switch)");
+                    }
+                }
+            }
+        } break;
 
         case 'z':   // z = disable watchdog timer
             // forget about the unknown AVR
@@ -609,8 +765,10 @@ function AddToHistory(i,vals)
         }
         entry = history[0];
     }
-    for (var j=0; j<vals.length; ++j) {
-        entry[j+i] = vals[j];
+    if (vals) {
+        for (var j=0; j<vals.length; ++j) {
+            entry[j+i] = vals[j];
+        }
     }
     return t;
 }

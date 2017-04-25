@@ -290,7 +290,6 @@ function DrawDamperPositions(vals)
 function DrawDamperLoads(vals)
 {
     var ctx = ctxs[kCanLod];
-    var dl = (airPressure - 1013) * 10; // TEST
 
     ctx.clearRect(0, 0, cx[kCanLod], cy[kCanLod]);
     // draw y-axis label
@@ -299,11 +298,6 @@ function DrawDamperLoads(vals)
     ctx.textBaseline="middle";
     ctx.textAlign="center";
     ctx.fillText("Add weights (kg)", cx[kCanLod]/2, cy[kCanLod]-20);
-    if (vals) {
-        for (var i=0; i<3; ++i) {
-            vals[i] = loadNom - (vals[i] - dl);
-        }
-    }
     DrawIndicators(kCanLod, vals, -loadNom, loadNom*2, loadNom, loadTol, 2, 10, 0);
 }
 
@@ -593,6 +587,25 @@ function ConnectToServer()
 
                     case 'E': { // motor speeds
                         DrawSpeeds(msg.split(' ').map(Number));
+                    } break;
+
+                    case 'F': { // digital readouts (time, 3 x pos, 3 x weight, pressure)
+                        var v = msg.split(' ').map(Number);
+                        if (v.length < 8) {
+                            DrawDamperPositions();
+                            DrawDamperLoads();
+                            AddToHistory(v[0], []);
+                            if (needDrawHis) DrawPositionHistory();
+                            break;
+                        }
+                        var t = v.shift();
+                        var pos = v.splice(0,3);
+                        DrawDamperPositions(pos);
+                        AddToHistory(t, pos);
+                        DrawDamperLoads(v.splice(0,3));
+                        // draw history plot if necessary
+                        if (needDrawHis) DrawPositionHistory();
+                        air.innerHTML = airPressure = v[0];
                     } break;
                 }
             };
