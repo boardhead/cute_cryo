@@ -17,6 +17,15 @@ const kAtmel            = 0x03eb;
 const kEVK1101          = 0x2300;
 const kPosHisLen        = 600;      // position history length
 const kNumLimit         = 2;        // number of limit switches
+const kHardwarePollTime = 80;       // hardware polling time (ms)
+const kMaxBadPolls      = 3;        // number of bad polls before deactivating
+
+// states for ADAM-6017 (adamState)
+const kAdamBad          = -1;       // communication error
+const kAdamNotConnected = 0;        // Adam is not connected
+const kAdamMissed       = 1;        // missed a response from the Adam
+const kAdamWaiting      = 2;        // waiting for a response from the Adam
+const kAdamOK           = 3;        // Adam responded OK
 
 const kBanner = '---- CUTE Cryostat Position Control ' + kServerVersion + ' ----';
 
@@ -25,10 +34,10 @@ var avrSN = [
     'ffffffff3850313339302020ff0d0b'    // AVR1
 ];
 
-// ADAM-6017 data acquisition module
-var adamIP = "130.15.24.85";
-var adamPort = 502;
+var adamIP = "130.15.24.85";    // ADAM-6017 IP
+var adamPort = 502;             // ADAM-6017 port number
 
+// IP's that are allowed to connect to the server
 var authorized = {
     '*' : 1, // (uncomment this to allow commands from any IP)
     'localhost' : 1,
@@ -37,7 +46,7 @@ var authorized = {
 
 var adam;               // client for communicating with ADAM-6017
 var adamValue = [ ];    // Adam ADC values (x8)
-var adamState = 0;      // -1=bad, 0=not connected, 1=missed response, 2=waiting response, 3=got response
+var adamState = kAdamNotConnected;
 
 var usb = require('usb');
 var fs = require('fs');
@@ -45,9 +54,11 @@ var WebSocketServer = require('websocket').server;
 var http = require('http');
 
 var avrs = [];          // AVR devices
+var avrOK = [];         // flag set if AVR is responding OK
 var foundAVRs = 0;      // number of recognized AVRs
 var conn = [];          // http client connections
 var active = 0;         // flag set if position control is active
+var badPolls = 0;       // number of bad polls when active
 
 var flashPin = ['pa07','pa08','pa21','pa08'];   // sequence to flash LED's
 var flashNum = flashPin.length - 1;
@@ -65,6 +76,7 @@ var intrvl;                 // interval timer for polling hardware
 var fullPoll = 0;
 var verbose = 0;
 
+var linear = [0, 0, 0, 0, 0, 0];    // linear transducer measurements (mm)
 var damperPosition = [-1,-1,-1];    // positions of the 3 dampers (mm)
 var damperAddWeight = [0, 0, 0];    // weight to add to the 3 dampers (kg)
 var airPressure = 1013;             // measured air pressure (hPa)
@@ -76,19 +88,142 @@ var server = http.createServer(function(request, response) {
     // process HTTP request. Since we're writing just WebSockets server
     // we don't have to implement anything.
 });
-server.on('error', function(error) {
-    Log('Server error!');
-});
-
+server.on('error', function(error) { Log('Server error!') });
 server.listen(8080, function() { });
 
 // create the server
-wsServer = new WebSocketServer({
-    httpServer: server
-});
+wsServer = new WebSocketServer({ httpServer: server });
 
-// WebSocket server
-wsServer.on('request', function(request) {
+// handle connection requests from our web clients
+wsServer.on('request', function(request) { HandleClientRequest(request) });
+
+// handle CTRL-C and SIGINT signal
+process.on('SIGINT', function() { HandleSigInt() });
+
+// handle new USB devices being connected
+usb.on('attach', function(device) {
+    if (device.deviceDescriptor.idVendor  == kAtmel &&
+        device.deviceDescriptor.idProduct == kEVK1101)
+    {
+        OpenAVR(device);
+    }
+});
+usb.on('error', HandleError);
+
+// handle USB devices that have disconnected
+usb.on('detach', ForgetAVR);
+
+Log();
+Log(kBanner);
+
+ConnectToAdam();
+FindAVRs();     // find all connected AVR boards
+
+// set interval timer to poll the hardware
+intrvl = setInterval(PollHardware, kHardwarePollTime);
+
+//-----------------------------------------------------------------------------
+// poll the hardware
+function PollHardware()
+{
+    var bad;
+
+    fullPoll = !fullPoll;
+
+    if (adamState != kAdamOK) {
+        // send empty ADC readings if Adam didn't respond
+        if (fullPoll) {
+            var t = AddToHistory(0);
+            PushData('F ' + (t % kPosHisLen));
+        }
+        if (!adam) ConnectToAdam();
+        bad = 'Adam';
+    } else if (!avrOK[0]) {
+        bad = 'AVR0';
+    }
+
+    if (bad) {
+        if (badPolls < kMaxBadPolls) ++badPolls;
+        if (active && badPolls >= kMaxBadPolls) {
+            Log(bad, "poll error!  System deactivated");
+            Deactivate();
+        }
+    } else {
+        badPolls = 0;
+    }
+
+    // poll ADAM-6017
+    if (adamState == kAdamWaiting || adamState == kAdamOK) {
+        // send command to read all 8 ADC's
+        // 0x01, 0x00 = transaction ID = 0
+        // 0x00, 0x00 = protocol ID = 0
+        // 0x00, 0x06 = message length = 6 bytes to follow
+        // 0x01       = unit ID = 1
+        // 0x04       = function code = 4 (read input registers)
+        // 0x00, 0x00 = address of first register = 0 (+ 0x4000)
+        // 0x00, 0x08 = number of registers to read = 8 (16 bytes)
+        if (!adam.write('010000000006010400000008', 'hex')) {
+            Log("Adam write error");
+        }
+        if (adamState == kAdamOK) {
+            adamState = kAdamWaiting;
+        } else if (adamState == kAdamWaiting) {
+            adamState = kAdamMissed;
+            Log("Adam not responding");
+        }
+    } else if (adamState == kAdamNotConnected) {
+        Log("Adam not connected!");
+        adamState = kAdamBad;
+    }
+
+    for (var i=0; i<avrs.length; ++i) {
+        if (avrs[i] == null) continue;
+        avrOK[i] = 0;
+        var cmd;
+        switch (i) {
+            case 0: // AVR0
+                cmd = "f.m0;m1;m2;g.pa0-" + (kNumLimit-1) + "\n";   // poll limit switches
+                break;
+            case 1: // AVR1
+                cmd = "c.nop\n";    // (nothing to do yet)
+                break;
+            default:
+                // re-send "ser" command in case it was missed
+                // (send even if we already got the "ser" response
+                // because that should have triggered a "z" which
+                // would need to be re-sent if we arrived here)
+                cmd = "a.ser;b.ver\n";
+                break;
+        }
+        avrs[i].SendCmd(cmd);
+    }
+}
+
+//-----------------------------------------------------------------------------
+// Calculate damper positions, loads, etc
+function Calculate()
+{
+    for (var i=0; i<6; ++i) {
+        linear[i] = (adamValue[i] - 35316) * (16.17 - 13.87) / (39856 - 35316) + 0;
+    }
+    for (var i=0; i<3; ++i) {
+        damperPosition[i] = linear[i];
+    }
+}
+
+//-----------------------------------------------------------------------------
+// Drive motors for active position control
+function Drive()
+{
+}
+
+//=============================================================================
+// WebSocket server communication
+
+//-----------------------------------------------------------------------------
+// handle requests from our web clients
+function HandleClientRequest(request)
+{
     try {
         var connection = request.accept("cute", request.origin);
 
@@ -98,21 +233,17 @@ wsServer.on('request', function(request) {
 
         // define a few member functions
         connection.Activate = Activate;
-        connection.SendData = function (str) {
-            this.send(str, function ack(error) { });
-        };
-        connection.Respond = function () {
+        connection.SendData = function(str) { this.send(str, function ack(error) { }) };
+        connection.Respond = function() {
             this.SendData('C <span class=res>'+EscapeHTML(Array.from(arguments).join(' '))+'</span><br/>');
         };
-        connection.Log = function () {
+        connection.Log = function() {
             Log('['+this.cuteName+'] '+Array.from(arguments).join(' '));
         };
         connection.HandleServerCommand = HandleServerCommand;
 
         // handle all messages from users here
-        connection.on('message', function(message) {
-            this.HandleServerCommand(message);
-        });
+        connection.on('message', function(message) { this.HandleServerCommand(message) });
 
         connection.on('close', function(reason) {
             // close user connection
@@ -145,199 +276,6 @@ wsServer.on('request', function(request) {
     }
     catch (err) {
     }
-});
-
-// handle CTRL-C and SIGINT signal
-process.on('SIGINT', function() {
-    console.log('');    // (for linefeed after CTRL-C)
-    Log('Exiting on SIGINT');
-    Cleanup();
-    // exit after giving time to log last message
-    setTimeout(function() { process.exit(); }, 10);
-});
-
-// handle new USB devices being connected
-usb.on('attach', function(device) {
-    if (device.deviceDescriptor.idVendor  == kAtmel &&
-        device.deviceDescriptor.idProduct == kEVK1101)
-    {
-        OpenAVR(device);
-    }
-});
-
-// handle USB devices that have disconnected
-usb.on('detach', ForgetAVR);
-
-Log();
-Log(kBanner);
-
-ConnectToAdam();
-FindAVRs();     // find all connected AVR boards
-
-// poll the hardware periodically
-intrvl = setInterval(function()
-{
-    fullPoll = !fullPoll;
-
-    if (adamState != 3) {
-        // send empty ADC readings if Adam didn't respond
-        if (fullPoll) {
-            var t = AddToHistory(0);
-            PushData('F ' + (t % kPosHisLen));
-        }
-        if (!adam) ConnectToAdam();
-    }
-
-    // poll ADAM-6017
-    if (adamState >= 2) {
-        // send command to read all 8 ADC's
-        // 0x01, 0x00 = transaction ID = 0
-        // 0x00, 0x00 = protocol ID = 0
-        // 0x00, 0x06 = message length = 6 bytes to follow
-        // 0x01       = unit ID = 1
-        // 0x04       = function code = 4 (read input registers)
-        // 0x00, 0x00 = address of first register = 0 (+ 0x4000)
-        // 0x00, 0x08 = number of registers to read = 8 (16 bytes)
-        if (!adam.write('010000000006010400000008', 'hex')) {
-            Log("Adam write error");
-        }
-        if (adamState == 3) {
-            adamState = 2;
-        } else if (adamState == 2) {
-            adamState = 1;
-            Log("Adam not responding");
-        }
-    } else if (adamState == 0) {
-        Log("Adam not connected!");
-        adamState = -1;
-    }
-
-    for (var i=0; i<avrs.length; ++i) {
-        if (avrs[i] == null) continue;
-        var cmd;
-        switch (i) {
-            case 0: // AVR0
-                cmd = "f.m0;m1;m2;g.pa0-" + (kNumLimit-1) + "\n";   // poll limit switches
-                break;
-            case 1: // AVR1
-                cmd = "c.nop\n";    // (nothing to do yet)
-                break;
-            default:
-                // re-send "ser" command in case it was missed
-                // (send even if we already got the "ser" response
-                // because that should have triggered a "z" which
-                // would need to be re-sent if we arrived here)
-                cmd = "a.ser;b.ver\n";
-                break;
-        }
-        avrs[i].SendCmd(cmd);
-    }
-}, 80);
-
-//-----------------------------------------------------------------------------
-// Connect to ADAM-6017
-function ConnectToAdam()
-{
-    var net = require('net');
-    adam = new net.Socket();
-
-    // handle connect message
-    adam.connect(adamPort, adamIP, function() {
-        adamState = 3;
-        Log('Adam attached');
-    });
-    
-    // handle incoming data from the ADAM-6017
-    adam.on('data', function(data) {
-        if (data.length == 25) {
-            if (adamState == 1) Log("Adam OK");
-            adamState = 3;
-            // read the returned values
-            for (var i=0; i<8; ++i) {
-                var j = i * 2 + 9;
-                adamValue[i] = data[i*2+9] * 256 + data[j+1];
-            }
-            if (verbose) Log("Adam values:", adamValue.join(' '));
-            
-            Calculate();            // calculate damper positions, loads, etc
-            if (active) Drive();    // drive motors if active control is on
-
-            if (fullPoll) {
-                // save in history and send data back to http clients
-                var t = AddToHistory(0, damperPosition);
-                PushData('F ' + (t % kPosHisLen) + ' ' +
-                         damperPosition.map( function(x) { return x.toFixed(4); } ).join(' ') + ' ' +
-                         damperAddWeight.map( function(x) { return x.toFixed(4); } ).join(' ') + ' ' +
-                         airPressure.toFixed(1));
-                // flash some LED's for the fun of it
-                if (t != flashTime) {
-                    var flashNew = (flashNum + 1) % flashPin.length;
-                    var cmd = "c."+flashPin[flashNum]+" 1;c."+
-                                   flashPin[flashNew]+" 0\n";
-                    for (var i=0; i<2; ++i) {
-                        if (avrs[i]) avrs[i].SendCmd(cmd);
-                    }
-                    flashNum = flashNew;
-                    flashTime = t;
-                }
-            }
-        }
-    });
-
-    // handle connection close
-    adam.on('close', function() {
-        adamState = -1;
-        if (adam) {
-            adam.destroy();
-            adam = null;
-        }
-    });
-
-    // handle communication errors
-    adam.on('error', function() {
-        if (adamState == 0) {
-            Log("Adam communication error");
-            adamState = -1;
-        }
-        if (adam) {
-            adam.destroy();
-            adam = null;
-        }
-    });
-}
-
-//-----------------------------------------------------------------------------
-// Calculate damper positions, loads, etc
-function Calculate()
-{
-    for (var i=0; i<3; ++i) {
-        damperPosition[i] = (adamValue[i] - 0x8000) / 0x10000 * 28 + 11.8;
-    }
-}
-
-//-----------------------------------------------------------------------------
-// Drive motors for active position control
-function Drive()
-{
-}
-
-//-----------------------------------------------------------------------------
-// Get client address
-// Inputs: WebSocketServer
-function GetAddr(sock)
-{
-    var addr = sock.remoteAddress.replace('::ffff:','');
-    if (addr == '::1') addr = 'localhost';
-    return addr;
-}
-
-//-----------------------------------------------------------------------------
-// Push data to all http clients
-function PushData(str)
-{
-    for (var i=0; i<conn.length; ++i) {
-        conn[i].SendData(str);
-    }
 }
 
 //-----------------------------------------------------------------------------
@@ -369,7 +307,42 @@ function HandleServerCommand(message)
         // process the command
         switch (cmd) {
             case 'help':
-                this.Respond('Available commands: help, name, who, log, active, list, verbose, avr#');
+                this.SendData(
+                    'C <table width="100%" class=tbl>' +
+                    '<tr><td colspan=4>CUTE Commands:</th></tr>' +
+                    '<tr><td class=nr>/active [on|off]</td><td>- get/set active control</td>' +
+                        '<td class=nr>/log</td><td>- enter log message</td></tr>' +
+                    '<tr><td class=nr>/avr# CMD</td><td>- send AVR command</td>' +
+                        '<td class=nr>/name [WHO]</td><td>- get/set client name</td></tr>' +
+                    '<tr><td class=nr>/cal</td><td>- show Adam calibration</td>' +
+                        '<td class=nr>/verbose [on|off]</td><td>- get/set verbose state</td></tr>' +
+                    "<tr><td class=nr>/list</td><td>- list connected AVR's</td>" +
+                        '<td class=nr>/who</td><td>- list connected clients</td></tr>' +
+                    '</table>'
+                );
+                break;
+            case 'active':
+                this.Activate(str);
+                break;
+            case 'cal':
+                if (adamState != kAdamOK) {
+                    this.Respond('Adam is not OK');
+                } else {
+                    Log('Raw:', adamValue.join(' '));
+                    Log('Cal:', linear.map(function(x) { return x.toFixed(2) } ).join(' '), 
+                        airPressure.toFixed(1));
+                }
+                break;
+            case 'list': {
+                var num = 0;
+                for (var i=0; i<avrs.length; ++i) if (avrs[i]) ++num;
+                this.Respond(num, 'AVRs connected:');
+                for (var i=0; i<avrs.length; ++i) {
+                    if (avrs[i]) this.Respond('AVR'+i, avrs[i].avrSN);
+                }
+            }   break;
+            case 'log':
+                this.Log(str);
                 break;
             case 'name':
                 if (str.length) {
@@ -397,20 +370,6 @@ function HandleServerCommand(message)
                         return e.cuteName + (e==this?' (you)':'')
                     },this).join(', '));
                 break;
-            case 'list': {
-                var num = 0;
-                for (var i=0; i<avrs.length; ++i) if (avrs[i]) ++num;
-                this.Respond(num, 'AVRs connected:');
-                for (var i=0; i<avrs.length; ++i) {
-                    if (avrs[i]) this.Respond('AVR'+i, avrs[i].avrSN);
-                }
-            }   break;
-            case 'active':
-                this.Activate(str);
-                break;
-            case 'log':
-                this.Log(str);
-                break;
             default:
                 // check for AVR commands
                 if (cmd.length==4 && cmd.substr(0,3) == 'avr') {
@@ -437,56 +396,101 @@ function HandleServerCommand(message)
 }
 
 //-----------------------------------------------------------------------------
-// Activate/deactivate position control
-function Activate(arg)
+// Get client address
+// Inputs: WebSocketServer
+function GetAddr(sock)
 {
-    var on = { 'off':0, '0':0, 'on':1, '1':1 }[arg.toLowerCase()];
-    if (arg == '' || on == active) {
-        this.Respond('Active control is', (on==null ? 'currently' : 'already'),
-            (active=='1' ? 'on' : 'off'));
-    } else if (on=='1' || on=='0') {
-        active = on;
-        PushData('D ' + on);
-        this.Log('Position control', active==1 ? 'activated' : 'deactivated');
-    } else {
-        this.Respond('Invalid argument for "active" command');
-    }
+    var addr = sock.remoteAddress.replace('::ffff:','');
+    if (addr == '::1') addr = 'localhost';
+    return addr;
 }
 
 //-----------------------------------------------------------------------------
-// Escape string for HTML
-function EscapeHTML(str)
+// Push data to all http clients
+function PushData(str)
 {
-    var entityMap = {
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;"
-    };
-    return str.replace(/[&<>]/g, function (s) { return entityMap[s]; });
+    for (var i=0; i<conn.length; ++i) {
+        conn[i].SendData(str);
+    }
 }
 
+//=============================================================================
+// ADAM-6017 communication
+
 //-----------------------------------------------------------------------------
-// Log message to console and file
-function Log()
+// Connect to ADAM-6017
+function ConnectToAdam()
 {
-    var msg;
-    var d = new Date();
-    if (arguments.length) {
-        msg = d.getFullYear() + '-' + Pad2(d.getMonth()+1) + '-' + Pad2(d.getDate()) + ' ' +
-                Pad2(d.getHours()) + ':' + Pad2(d.getMinutes()) + ':' +
-                Pad2(d.getSeconds()) + ' ' + Array.from(arguments).join(' ');
-    } else {
-        msg = '';
-    }
-    console.log(msg);
-    fs.appendFile('cute_server_'+d.getFullYear()+Pad2(d.getMonth()+1)+'.log', msg+'\n', 
-        function(error) {
-            if (error) console.log(error, 'writing log file');
+    var net = require('net');
+    adam = new net.Socket();
+
+    // handle connect message
+    adam.connect(adamPort, adamIP, function() {
+        adamState = kAdamOK;
+        Log('Adam attached');
+    });
+    
+    // handle incoming data from the ADAM-6017
+    adam.on('data', function(data) {
+        if (data.length == 25) {
+            if (adamState == kAdamMissed) Log("Adam OK");
+            adamState = kAdamOK;
+            // read the returned values
+            for (var i=0; i<8; ++i) {
+                var j = i * 2 + 9;
+                adamValue[i] = data[i*2+9] * 256 + data[j+1];
+            }
+            if (verbose) Log("Adam values:", adamValue.join(' '));
+            
+            Calculate();            // calculate damper positions, loads, etc
+            if (active) Drive();    // drive motors if active control is on
+
+            if (fullPoll) {
+                // save in history and send data back to http clients
+                var t = AddToHistory(0, damperPosition);
+                PushData('F ' + (t % kPosHisLen) + ' ' +
+                         damperPosition.map( function(x) { return x.toFixed(4) } ).join(' ') + ' ' +
+                         damperAddWeight.map( function(x) { return x.toFixed(4) } ).join(' ') + ' ' +
+                         airPressure.toFixed(1));
+                // flash some LED's for the fun of it
+                if (t != flashTime) {
+                    var flashNew = (flashNum + 1) % flashPin.length;
+                    var cmd = "c."+flashPin[flashNum]+" 1;c."+
+                                   flashPin[flashNew]+" 0\n";
+                    for (var i=0; i<2; ++i) {
+                        if (avrs[i]) avrs[i].SendCmd(cmd);
+                    }
+                    flashNum = flashNew;
+                    flashTime = t;
+                }
+            }
         }
-    );
-    // send back to clients
-    PushData('C ' +  EscapeHTML(msg) + '<br/>');
+    });
+
+    // handle connection close
+    adam.on('close', function() {
+        adamState = kAdamBad;
+        if (adam) {
+            adam.destroy();
+            adam = null;
+        }
+    });
+
+    // handle communication errors
+    adam.on('error', function() {
+        if (adamState == kAdamNotConnected) {
+            Log("Adam communication error");
+            adamState = kAdamBad;
+        }
+        if (adam) {
+            adam.destroy();
+            adam = null;
+        }
+    });
 }
+
+//=============================================================================
+// AVR32 USB communication
 
 //-----------------------------------------------------------------------------
 // Enumerate USB devices to locate our AVR boards
@@ -525,6 +529,7 @@ function OpenAVR(device)
             endIn.startPoll(4, 256);
             endIn.on('data', HandleData);
             endIn.on('error', HandleError);
+            endOut.on('error', HandleError);
 
             // add member function to send command to AVR
             device.SendCmd = function SendCmd(cmd) {
@@ -562,6 +567,7 @@ function ForgetAVR(deviceOrEndpoint)
         Log('AVR'+avrNum, 'detached!');
         if (avrNum < 2) --foundAVRs;
         avrs[avrNum] = null;
+        avrOK[avrNum] = 0;
     }
 }
 
@@ -605,6 +611,7 @@ function HandleData(data)
         // ignore truncated responses (may happen at startup if commands
         // were sent before AVR was fully initialized)
         if (!id) continue;
+        avrOK[avrNum] = 1;
         avrNum = HandleResponse(avrNum, id, str);
     }
 }
@@ -643,6 +650,8 @@ function HandleResponse(avrNum, responseID, msg)
                         avrs[i].interfaces[0].endpoints[0].avrNum = i;
                         avrs[i].interfaces[0].endpoints[1].avrNum = i;
                         avrs[avrNum] = null;
+                        avrOK[i] = 1;
+                        avrOK[avrNum] = 0;
                         avrNum = i;
                     }
                     break;
@@ -744,6 +753,84 @@ function HandleResponse(avrNum, responseID, msg)
     return avrNum;
 }
 
+//=============================================================================
+// Other functions
+
+//-----------------------------------------------------------------------------
+// SIGINT handler
+function HandleSigInt()
+{
+    console.log('');    // (for linefeed after CTRL-C)
+    Log('Exiting on SIGINT');
+    Cleanup();
+    // exit after giving time to log last message
+    setTimeout(function() { process.exit(); }, 10);
+}
+
+//-----------------------------------------------------------------------------
+// Activate/deactivate position control with messages
+function Activate(arg)
+{
+    var on = { 'off':0, '0':0, 'on':1, '1':1 }[arg.toLowerCase()];
+    if (arg == '' || on == active) {
+        this.Respond('Active control is', (on==null ? 'currently' : 'already'),
+            (active=='1' ? 'on' : 'off'));
+    } else if (on == '1') {
+        active = 1;
+        PushData('D 1');
+        this.Log('Position control activated');
+    } else if (on == '0') {
+        Deactivate();
+        this.Log('Position control deactivated');
+    } else {
+        this.Respond('Invalid argument for "active" command');
+    }
+}
+
+//-----------------------------------------------------------------------------
+// Deactivate position control and stop motors if necessary (no messages)
+function Deactivate()
+{
+    active = 0;
+    if (avrs[0]) avrs[0].SendCmd("halt\n");
+    PushData('D 0');
+}
+
+//-----------------------------------------------------------------------------
+// Escape string for HTML
+function EscapeHTML(str)
+{
+    var entityMap = {
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;"
+    };
+    return str.replace(/[&<>]/g, function(s) { return entityMap[s]; });
+}
+
+//-----------------------------------------------------------------------------
+// Log message to console and file
+function Log()
+{
+    var msg;
+    var d = new Date();
+    if (arguments.length) {
+        msg = d.getFullYear() + '-' + Pad2(d.getMonth()+1) + '-' + Pad2(d.getDate()) + ' ' +
+                Pad2(d.getHours()) + ':' + Pad2(d.getMinutes()) + ':' +
+                Pad2(d.getSeconds()) + ' ' + Array.from(arguments).join(' ');
+    } else {
+        msg = '';
+    }
+    console.log(msg);
+    fs.appendFile('cute_server_'+d.getFullYear()+Pad2(d.getMonth()+1)+'.log', msg+'\n', 
+        function(error) {
+            if (error) console.log(error, 'writing log file');
+        }
+    );
+    // send back to clients
+    PushData('C ' +  EscapeHTML(msg) + '<br/>');
+}
+
 //-----------------------------------------------------------------------------
 // Add to history of measurements
 // Inputs: index/value pairs
@@ -794,7 +881,7 @@ function Cleanup()
         if (i < 2) --foundAVRs;
         // release any still-open interfaces
         try {
-            avrsi.interfaces[0].release(true, function (error) { });
+            avrsi.interfaces[0].release(true, function(error) { });
             avrsi.close();
         }
         catch (err) {

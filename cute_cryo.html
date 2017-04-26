@@ -26,7 +26,10 @@ div.lg  { font:14px verdana; border:1px solid #d3d3d3; padding:3px 6px 3px 6px;
 .tr     { padding: 8px 5px 5px 10px }
 .tl2    { padding: 1px 15px 5px 5px }
 .tr2    { padding: 1px 5px 5px 10px }
-span.res{ color:#c88 }
+.res    { color:#c88 }
+.tbl    { border-collapse: collapse }
+.tbl td { color:#c88; padding:0; margin:0 }
+td.nr   { padding-left: 10px }
 </style>
 
 <table class=no><tr><td colspan=2><div id="title" class=lg>
@@ -149,7 +152,7 @@ function ScaleCanvas(cnum)
     ctxs[cnum].scale(can.width/cx[cnum], can.height/cy[cnum]);
 }
 
-// Handle kepresses in Commend field
+// Handle kepresses in Comment field
 function Comment(event)
 {
     if (event.which == 13) { // pressed return key?
@@ -166,7 +169,7 @@ function Comment(event)
         if (cmd && cmd.length>1 && cmd.substr(0,1) == '/') {
             Send(cmd.substr(1) + ':' + txt.substr(txt.indexOf(cmd)+cmd.length+1));
         } else {
-            Send('Log:"'+com.value+'"');
+            Send('log:"'+com.value+'"');
         }
         com.value = '';
     }
@@ -187,6 +190,8 @@ function CommentKey(event)
                 com.value = comHis[--comNum];
             }
         }
+    } else if (event.which == 27) {
+        Send('avr0:halt');
     }
 }
 
