@@ -32,9 +32,14 @@ div.lg  { font:14px verdana; border:1px solid #d3d3d3; padding:3px 6px 3px 6px;
 td.nr   { padding-left: 10px }
 </style>
 
-<table class=no><tr><td colspan=2><div id="title" class=lg>
-<center><h3 style='margin:.5em'>CUTE Cryostat Position Control <span id="onOff"></span></h3></center>
-</div></td></tr>
+<table class=no><tr><td colspan=2>
+<div id="title" class=lg>
+<div style="float: right; margin-top: .4em"><a href="cute_help.html" target="_blank">
+  <img src="qmark.png" alt="help" onmouseover="this.src='qmark2.png'" onmouseout="this.src='qmark.png'">
+</a></div>
+<center><h3 style='margin:.5em'>CUTE Cryostat Position Control <span id="onOff"></span></h3></center></div>
+
+</td></tr>
 
 <tr><td><canvas id="can3" class=brd width="334" height="70"></canvas></td>
 <td><div class="ca">
@@ -61,7 +66,7 @@ td.nr   { padding-left: 10px }
 Your browser does not support the HTML5 canvas tag.</canvas></td></tr>
 
 <tr><td colspan=2>
-<div id="log" class="lg brd" style="height:12em;"></div>
+<div id="log" class="lg brd"><br/><br/><br/><br/><br/><br/><br/><br/><br/><br/><br/></div>
 </td></tr>
 
 <tr><td colspan=2>
@@ -73,6 +78,15 @@ Your browser does not support the HTML5 canvas tag.</canvas></td></tr>
 </table>
 
 <script type="text/javascript">
+
+// set fixed log window height (attempt to make it an even number of text lines)
+var log = document.getElementById('log');
+var h1 = log.clientHeight;
+log.style.height = h1 + 'px';
+var err = log.clientHeight - h1;
+log.style.height = (h1 - err) + 'px';
+log.innerHTML = '';
+
 var kPosHisLen = 600;   // position history length
 var kComHisLen = 100;   // comment history length
 var kLogHisLen = 200;   // log window scrollback lines
@@ -191,7 +205,11 @@ function CommentKey(event)
             }
         }
     } else if (event.which == 27) {
-        Send('avr0:halt');
+        if (active == 1) {
+            Send("log:Can't stop motors while active");
+        } else {
+            Send('avr0:halt');
+        }
     }
 }
 
@@ -541,7 +559,6 @@ function ConnectToServer()
         var host = window.location.hostname;
         var port = 8080;
         if (host == "") host = "localhost";
-        console.log(host+":"+port);
         var ws = new WebSocket("ws://"+host+":"+port, ["cute", "test"]);
         cuteServer = ws;
         ws.onopen = function() {

@@ -1,0 +1,76 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN"
+        "http://www.w3.org/TR/html4/loose.dtd">
+<html>
+<head>
+<meta http-equiv="content-type" content="text/html; charset=utf-8">
+<title>CUTE Cryostat Position Control Help</title>
+</head>
+<body>
+<h2>CUTE Cryostat Position Control Help</h2>
+
+<p>The CUTE cryostat is mounted on a set of 3 dampers to isolate it from
+external sources of vibration.  This position system monitors and controls
+the positions of these dampers to keep the cryostat in a fixed location.</p>
+
+<p>This documentation explains the elements of the html interface to this
+system.</p>
+
+<h3>Motor speeds</h3>
+
+<p>These indicate the speed in steps/sec and direction of each of the 3 control motors.
+Positive motor speed drives the damper upwards.</p>
+
+<h3>Active Control</h3>
+
+<p>Enable or disable the active position control.  When activated, the control
+system will attempt to keep all dampers at a position of 1.0 &plusmn; 0.1 mm.</p>
+
+<h3>Air Pressure</h3>
+
+<p>Measured ambient air pressure in the mine.  This value is used in the
+calculation for the amount of weights to add.</p>
+
+<h3>Damper positions</h3>
+
+<p>Position in mm of the three dampers.  The target position is 1.0 &plusmn; 0.1 mm.</p>
+
+<h3>Add weights</h3>
+
+<p>These indicators are used when adding weights to balance the cryostat.  When
+the system is active, weights should be added (+ve values) or removed (-ve values)
+from each damper until these indicators are centered.</p>
+
+<h3>Damper position history</h3>
+
+<p>This is a 10-minute history of the three damper positions.  The most current
+reading is at the left edge of this plot, and the points slide to the right
+as time advances.</p>
+
+<h3>Comment</h3>
+
+<p>Type a comment in this field then press RETURN to enter the comment
+in the log.  This may be used as a simple chat feature to communicate
+with other clients connected to the position control system.</p>
+
+<p>The up/down arrows on the keyboard may be used to recall previous
+comments.</p>
+
+<p>The comment field supports a set of commands beginning with a "/":</p>
+
+<blockquote><table>
+<tr><td valign='top'>/active&nbsp;[on|off]</td><td>Enable/disable active control.</td></tr>
+<tr><td valign='top'>/avr#&nbsp;CMD</td><td>Send AVR command (# = AVR number).  eg. "/avr0 help".</td></tr>
+<tr><td valign='top'>/cal</td><td>Show raw and calibrated readings from ADAM-6017 ADC.</td></tr>
+<tr><td valign='top'>/help</td><td>Show this list of commands.</td></tr>
+<tr><td valign='top'>/list</td><td>List connected AVR's.</td></tr>
+<tr><td valign='top'>/log&nbsp;MSG</td><td>Enter a log message.  This is the same as entering a
+comment in the log except that the message is not quoted.</td></tr>
+<tr><td valign='top'>/name&nbsp;[WHO]</td><td>Get/set client name.</td></tr>
+<tr><td valign='top'>/verbose&nbsp;[on|off]</td><td>Get/set verbose state.</td></tr>
+<tr><td valign='top'>/who</td><td>List connected clients.</td></tr>
+</table></blockquote>
+
+<p>Pressing ESC in this field stops all motors when active control is off.</p>
+
+</body>
+</html>

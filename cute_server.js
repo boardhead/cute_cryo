@@ -64,6 +64,7 @@ var flashPin = ['pa07','pa08','pa21','pa08'];   // sequence to flash LED's
 var flashNum = flashPin.length - 1;
 var flashTime = 0;
 
+var vals = [0,0,0];         // most recent measured values
 var motorSpd = [0,0,0];     // motor speeds
 var limitSwitch = [0,0,0,0,0,0,0];   // limit-switch values (1=open)
 var lastSpd = '0 0 0';      // last motor speeds sent to clients (as string)
@@ -310,7 +311,7 @@ function HandleServerCommand(message)
                     'C <table width="100%" class=tbl>' +
                     '<tr><td colspan=4>CUTE Commands:</th></tr>' +
                     '<tr><td class=nr>/active [on|off]</td><td>- get/set active control</td>' +
-                        '<td class=nr>/log</td><td>- enter log message</td></tr>' +
+                        '<td class=nr>/log MSG</td><td>- enter log message</td></tr>' +
                     '<tr><td class=nr>/avr# CMD</td><td>- send AVR command</td>' +
                         '<td class=nr>/name [WHO]</td><td>- get/set client name</td></tr>' +
                     '<tr><td class=nr>/cal</td><td>- show Adam calibration</td>' +
@@ -435,9 +436,8 @@ function ConnectToAdam()
             if (adamState == kAdamMissed) Log("Adam OK");
             adamState = kAdamOK;
             // read the returned values
-            for (var i=0; i<8; ++i) {
-                var j = i * 2 + 9;
-                adamValue[i] = data[i*2+9] * 256 + data[j+1];
+            for (var i=0, j=9; i<8; ++i, j+=2) {
+                adamValue[i] = data[j] * 256 + data[j+1];
             }
             if (verbose) Log("Adam values:", adamValue.join(' '));
             
