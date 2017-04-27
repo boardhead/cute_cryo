@@ -64,7 +64,6 @@ var flashPin = ['pa07','pa08','pa21','pa08'];   // sequence to flash LED's
 var flashNum = flashPin.length - 1;
 var flashTime = 0;
 
-var vals = [0,0,0];         // most recent measured values
 var motorSpd = [0,0,0];     // motor speeds
 var limitSwitch = [0,0,0,0,0,0,0];   // limit-switch values (1=open)
 var lastSpd = '0 0 0';      // last motor speeds sent to clients (as string)
