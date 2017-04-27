@@ -211,6 +211,8 @@ function CommentKey(event)
         } else {
             Send('avr0:halt');
         }
+    } else if (event.which == 9) {
+        event.preventDefault(); // don't tab away from Comment field
     }
 }
 
