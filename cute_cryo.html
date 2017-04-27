@@ -72,7 +72,8 @@ Your browser does not support the HTML5 canvas tag.</canvas></td></tr>
 <tr><td colspan=2>
 <div id="typ" class="lg brd" style="height:2em;">Comment:
 <input type="text" id="com" size="75" style="font:14px verdana" autofocus
-       onkeypress="Comment(event)" onkeydown="CommentKey(event)"></div>
+    onblur="var noBlur=this; setTimeout(function() {noBlur.focus()},10)"
+    onkeypress="Comment(event)" onkeydown="CommentKey(event)"></div>
 </td></tr>
 
 </table>
