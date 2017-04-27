@@ -116,8 +116,8 @@ usb.on('detach', ForgetAVR);
 Log();
 Log(kBanner);
 
-ConnectToAdam();
-FindAVRs();     // find all connected AVR boards
+ConnectToAdam();    // connect to our ADAM-6017 via ethernet
+FindAVRs();         // find all connected USB AVR boards
 
 // set interval timer to poll the hardware
 intrvl = setInterval(PollHardware, kHardwarePollTime);
