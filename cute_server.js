@@ -45,7 +45,7 @@ const kPositionTol      = 0.1;      // tolerance in damper position (mm)
 const kMotorStepsPer_mm = 4302;     // number of motor steps per mm of stage travel
 const kMotorTol         = 1;        // maximum error in motor position (mm)
 
-const kAirPressureNom   = 1241;     // nominal mine air pressure (hPa)
+const kAirPressureNom   = 1300;     // nominal mine air pressure (hPa)
 const kVacuumArea       = 100;      // cross-section area of vacuum manifold (cm^2) (TEMPORARY)
 const kGravity          = 9.81;     // acceleration due to gravity (kg.m/s^2)
 
