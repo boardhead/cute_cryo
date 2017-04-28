@@ -4,21 +4,45 @@
 //
 // Description: CUTE cryostat position control hardware interface
 //
+//              This is a TCP server running on a system that interfaces
+//              multiple AVR32 boards attached via USB, and an ADAM-6017
+//              8-channel ADC attached via TCP.  The AVR32 boards are used as
+//              stepper-motor controllers and for digital i/o, and the ADAM is
+//              used to read out various analogue sensors.
+//
+//              Clients interact with this server via the cute_cryo.html page.
+//
 // Revisions:   2017-03-16 - v0.01 P. Harvey created
+//              2017-04-28 - v0.9 PH - basically complete except calibrations
 //
 // Syntax:      node cute_server.js
 //
 // Notes:       Requires additional node libraries to run.  Install them
 //              by typing: "npm install usb"
 //
-const kServerVersion    = 'v0.01';
+const kServerVersion    = 'v0.9';
 
-const kAtmel            = 0x03eb;
-const kEVK1101          = 0x2300;
+const kAtmel            = 0x03eb;   // Atmel USB manufacturer ID
+const kEVK1101          = 0x2300;   // EVK-1101 USB device ID
 const kPosHisLen        = 600;      // position history length
-const kNumLimit         = 2;        // number of limit switches
+const kNumLimit         = 6;        // number of limit switches to poll: "PA0-<kNumLimit-1>"
 const kHardwarePollTime = 80;       // hardware polling time (ms)
 const kMaxBadPolls      = 3;        // number of bad polls before deactivating
+const kMotorSlow        = 100;      // slowest drive speed (steps/s)
+
+const kDamperForceConst = 0.5;      // damper force constant (kg/mm)
+const kLoadNom          = 35;       // nominal damper load at nominal air pressure (kg)
+const kLoadMax          = 50;       // maximum damper load (kg) (lab jack limit)
+const kLoadMin          = 20;       // minimum damper load (kg)
+const kLoadTol          = 5;        // damper load tolerance (kg)
+const kPositionNom      = 1;        // nominal position of damper top (mm)
+const kPositionTol      = 0.1;      // tolerance in damper position (mm)
+const kMotorStepsPer_mm = 4302;     // number of motor steps per mm of stage travel
+const kMotorTol         = 1;        // maximum error in motor position (mm)
+
+const kAirPressureNom   = 1241;     // nominal mine air pressure (hPa)
+const kVacuumArea       = 100;      // cross-section area of vacuum manifold (cm^2) (TEMPORARY)
+const kGravity          = 9.81;     // acceleration due to gravity (kg.m/s^2)
 
 // states for ADAM-6017 (adamState)
 const kAdamBad          = -1;       // communication error
@@ -44,8 +68,22 @@ var authorized = {
     '130.15.24.88' : 1
 };
 
+// online help (HTML format)
+var helpMessage =
+    'C <table width="100%" class=tbl>' +
+    '<tr><td colspan=4>CUTE Commands:</th></tr>' +
+    '<tr><td class=nr>/active [on|off]</td><td>- get/set active control</td>' +
+        '<td class=nr>/log MSG</td><td>- enter log message</td></tr>' +
+    '<tr><td class=nr>/avr# CMD</td><td>- send AVR command</td>' +
+        '<td class=nr>/name [WHO]</td><td>- get/set client name</td></tr>' +
+    '<tr><td class=nr>/cal</td><td>- show Adam calibration</td>' +
+        '<td class=nr>/verbose [on|off]</td><td>- get/set verbose state</td></tr>' +
+    "<tr><td class=nr>/list</td><td>- list connected AVR's</td>" +
+        '<td class=nr>/who</td><td>- list connected clients</td></tr>' +
+    '</table>';
+
 var adam;               // client for communicating with ADAM-6017
-var adamValue = [ ];    // Adam ADC values (x8)
+var adamRaw = [ ];      // raw Adam ADC values (x8)
 var adamState = kAdamNotConnected;
 
 var usb = require('usb');
@@ -56,7 +94,7 @@ var http = require('http');
 var avrs = [];          // AVR devices
 var avrOK = [];         // flag set if AVR is responding OK
 var foundAVRs = 0;      // number of recognized AVRs
-var conn = [];          // http client connections
+var conn = [];          // web client connections
 var active = 0;         // flag set if position control is active
 var badPolls = 0;       // number of bad polls when active
 
@@ -66,7 +104,8 @@ var flashTime = 0;
 
 var vals = [0,0,0];         // most recent measured values
 var motorSpd = [0,0,0];     // motor speeds
-var limitSwitch = [0,0,0,0,0,0,0];   // limit-switch values (1=open)
+var motorDir = [0,0,0];     // current motor directions
+var limitSwitch = [0,0,0,0,0,0]; // limit-switches: top,bottom for each stage (1=open)
 var lastSpd = '0 0 0';      // last motor speeds sent to clients (as string)
 var motorPos = [0,0,0];     // motor positions
 var history = [];           // history of measured values
@@ -78,16 +117,17 @@ var verbose = 0;
 
 var linear = [0, 0, 0, 0, 0, 0];    // linear transducer measurements (mm)
 var damperPosition = [-1,-1,-1];    // positions of the 3 dampers (mm)
-var damperAddWeight = [0, 0, 0];    // weight to add to the 3 dampers (kg)
-var airPressure = 1013;             // measured air pressure (hPa)
+var stagePosition = [-1,-1,-1];     // current position of top of jack stand (mm)
+var damperLoad = [0, 0, 0];         // current damper loads (kg)
+var damperAddWeight = [0, 0, 0];    // weights to add to the 3 dampers (kg)
+var airPressure = kAirPressureNom;  // measured air pressure (hPa)
 
 //-----------------------------------------------------------------------------
 // Main script
 
-var server = http.createServer(function(request, response) {
-    // process HTTP request. Since we're writing just WebSockets server
-    // we don't have to implement anything.
-});
+// create HTTP server (don't implement request listener here
+// because that will be done by our WebSocketServer)
+var server = http.createServer(function(request, response) { });
 server.on('error', function(error) { Log('Server error!') });
 server.listen(8080, function() { });
 
@@ -95,29 +135,19 @@ server.listen(8080, function() { });
 wsServer = new WebSocketServer({ httpServer: server });
 
 // handle connection requests from our web clients
-wsServer.on('request', function(request) { HandleClientRequest(request) });
+wsServer.on('request', HandleClientRequest);
 
-// handle CTRL-C and SIGINT signal
-process.on('SIGINT', function() { HandleSigInt() });
+process.on('SIGINT', HandleSigInt); // handle CTRL-C (SIGINT signal)
 
-// handle new USB devices being connected
-usb.on('attach', function(device) {
-    if (device.deviceDescriptor.idVendor  == kAtmel &&
-        device.deviceDescriptor.idProduct == kEVK1101)
-    {
-        OpenAVR(device);
-    }
-});
-usb.on('error', HandleError);
+usb.on('attach', OpenAVR);      // handle new USB devices being connected
+usb.on('detach', ForgetAVR);    // handle USB devices being disconnected
+usb.on('error', HandleError);   // handle USB errors
 
-// handle USB devices that have disconnected
-usb.on('detach', ForgetAVR);
+Log();              // (blank log line)
+Log(kBanner);       // print startup banner
 
-Log();
-Log(kBanner);
-
-ConnectToAdam();
-FindAVRs();     // find all connected AVR boards
+ConnectToAdam();    // connect to ADAM-6017 ADC via TCP
+FindAVRs();         // find all connected AVR USB devices
 
 // set interval timer to poll the hardware
 intrvl = setInterval(PollHardware, kHardwarePollTime);
@@ -145,7 +175,7 @@ function PollHardware()
     if (bad) {
         if (badPolls < kMaxBadPolls) ++badPolls;
         if (active && badPolls >= kMaxBadPolls) {
-            Log(bad, "poll error!  System deactivated");
+            Log(bad, "poll error!  Position control deactivated");
             Deactivate();
         }
     } else {
@@ -204,10 +234,21 @@ function PollHardware()
 function Calculate()
 {
     for (var i=0; i<6; ++i) {
-        linear[i] = (adamValue[i] - 35316) * (16.17 - 13.87) / (39856 - 35316) + 0;
+        // calculate linear distances (TEMPORARY)
+        linear[i] = (35316 - adamRaw[i]) * (16.17 - 13.87) / (39856 - 35316) + 0;
     }
+    // calculate air pressure (TEMPORARY)
+    airPressure = kAirPressureNom + adamRaw[6] / 10;
+
     for (var i=0; i<3; ++i) {
-        damperPosition[i] = linear[i];
+        damperPosition[i] = linear[i];  // (TEMPORARY)
+        // calculate load on this damper (TEMPORARY)
+        stagePosition[i] = linear[i+3];
+        damperLoad[i] = kLoadNom + (stagePosition[i] - linear[i]) * kDamperForceConst;
+        // calculate nominal load on this damper (factor of 3 is for 3 dampers)
+        var loadNom = kLoadNom - (airPressure - kAirPressureNom) * kVacuumArea / (300 * kGravity);
+        // this is how much weight we need to add to achieve the nominal load
+        damperAddWeight[i] = loadNom - damperLoad[i];
     }
 }
 
@@ -215,6 +256,61 @@ function Calculate()
 // Drive motors for active position control
 function Drive()
 {
+    for (var i=0; i<3; ++i) {
+        // verify that motor position agrees with measured stage position
+        if (Math.abs(motorPos[i] / kMotorStepsPer_mm - stagePosition[i]) > kMotorTol) {
+            Log("Motor " + i + " error!  Position control deactivated");
+            Deactivate();
+            return;
+        }
+        var drive = 0; // (+1 = drive up, -1 = drive down)
+        var pos = damperPosition[i];
+        var load = damperLoad[i];
+        if (load > kLoadMax) {
+            // damper is over-loaded -- drive motor down
+            drive = -1;
+        } else if (load < kLoadMin) {
+            // damper is under-loaded -- drive motor up
+            drive = 1;
+        } else if (pos < kPositionNom - kPositionTol && load < kLoadMax - kLoadTol) {
+            // damper position is low -- drive motor up
+            drive = 1;
+        } else if (pos > kPositionNom + kPositionTol && load > kLoadMin + kLoadTol) {
+            // damper position is high -- drive motor down
+            drive = -1;
+        } else if (motorSpd[i] > 0) {
+            // stop if we have reached our goal or damper is near maximum
+            if (pos >= kPositionNom || load > kLoadMax - kLoadTol) {
+                RampMotor(i, 0);    // stop motor
+            } else {
+                drive = 1;          // continue driving;
+            }
+        } else if (motorSpd[i] < 0) {
+            // stop if we have reached our goal or damper is near minimum
+            if (pos <= kPositionNom || load < kLoadMin + kLoadTol) {
+                RampMotor(i, 0);    // stop motor
+            } else {
+                drive = -1;         // continue driving
+            }
+        }
+        if (drive) {
+            // don't attempt to drive if we hit the lab jack microswitch limit
+            if (drive > 0) {
+                if (limitSwitch[i*2] != 1) return;
+            } else {
+                if (limitSwitch[i*2 + 1] != 1) return;
+            }
+            // drive faster if we are far away from our destination
+            var away = Math.abs(pos - kPositionNom);
+            if (away > kPositionTol * 4) {
+                drive *= 10;
+            } else if (away > kPositionTol) {
+                drive *= 2;
+            }
+            // drive the motor in the specified direction
+            RampMotor(i, drive * kMotorSlow);
+        }
+    }
 }
 
 //=============================================================================
@@ -256,10 +352,11 @@ function HandleClientRequest(request)
             }
         });
 
+        // send opening message to our client
         connection.Respond(kBanner);
         connection.Respond('(' + foundAVRs, 'AVRs connected)');
 
-        connection.Log('Connected');
+        connection.Log('Connected');    // log this connection
 
         // send message indicating whether or not we are active
         connection.SendData('D ' + active);
@@ -275,6 +372,7 @@ function HandleClientRequest(request)
         }
     }
     catch (err) {
+        Log('Error handling client request');
     }
 }
 
@@ -306,33 +404,26 @@ function HandleServerCommand(message)
         }
         // process the command
         switch (cmd) {
+
             case 'help':
-                this.SendData(
-                    'C <table width="100%" class=tbl>' +
-                    '<tr><td colspan=4>CUTE Commands:</th></tr>' +
-                    '<tr><td class=nr>/active [on|off]</td><td>- get/set active control</td>' +
-                        '<td class=nr>/log MSG</td><td>- enter log message</td></tr>' +
-                    '<tr><td class=nr>/avr# CMD</td><td>- send AVR command</td>' +
-                        '<td class=nr>/name [WHO]</td><td>- get/set client name</td></tr>' +
-                    '<tr><td class=nr>/cal</td><td>- show Adam calibration</td>' +
-                        '<td class=nr>/verbose [on|off]</td><td>- get/set verbose state</td></tr>' +
-                    "<tr><td class=nr>/list</td><td>- list connected AVR's</td>" +
-                        '<td class=nr>/who</td><td>- list connected clients</td></tr>' +
-                    '</table>'
-                );
+                this.SendData(helpMessage);
                 break;
+
             case 'active':
                 this.Activate(str);
                 break;
+
             case 'cal':
                 if (adamState != kAdamOK) {
                     this.Respond('Adam is not OK');
                 } else {
-                    Log('Raw:', adamValue.join(' '));
+                    Log('Raw:', adamRaw.join(' '));
                     Log('Cal:', linear.map(function(x) { return x.toFixed(2) } ).join(' '), 
                         airPressure.toFixed(1));
+                    Log('Loads:', damperLoad.map(function(x) { return x.toFixed(2) }).join(' '));
                 }
                 break;
+
             case 'list': {
                 var num = 0;
                 for (var i=0; i<avrs.length; ++i) if (avrs[i]) ++num;
@@ -341,9 +432,11 @@ function HandleServerCommand(message)
                     if (avrs[i]) this.Respond('AVR'+i, avrs[i].avrSN);
                 }
             }   break;
+
             case 'log':
                 this.Log(str);
                 break;
+
             case 'name':
                 if (str.length) {
                     this.Log('/'+cmd, str);
@@ -352,6 +445,7 @@ function HandleServerCommand(message)
                     this.Respond('Your name is "'+this.cuteName+'"');
                 }
                 break;
+
             case 'verbose':
                 if (str.length) {
                     if (str.toLowerCase() == 'on') {
@@ -364,12 +458,14 @@ function HandleServerCommand(message)
                     this.Respond('Verbose', verbose ? 'on' : 'off');
                 }
                 break;
+
             case 'who':
                 this.Respond('Current users:',
                     conn.map(function(e){
                         return e.cuteName + (e==this?' (you)':'')
                     },this).join(', '));
                 break;
+
             default:
                 // check for AVR commands
                 if (cmd.length==4 && cmd.substr(0,3) == 'avr') {
@@ -406,7 +502,46 @@ function GetAddr(sock)
 }
 
 //-----------------------------------------------------------------------------
-// Push data to all http clients
+// Activate/deactivate position control with messages
+function Activate(arg)
+{
+    var on = { 'off':0, '0':0, 'on':1, '1':1 }[arg.toLowerCase()];
+    if (arg == '' || on == active) {
+        this.Respond('Active control is', (on==null ? 'currently' : 'already'),
+            (active=='1' ? 'on' : 'off'));
+    } else if (on == '1') {
+        if (avrs[0]) {
+            active = 1;
+            PushData('D 1');
+            // turn on motors and set zero position to stagePosition = 0
+            for (var i=0; i<3; ++i) {
+                var pos = Math.floor(stagePosition[i] * kMotorStepsPer_mm);
+                avrs[0].SendCmd('c.m' + i + ' on 1;m' + i + ' pos ' + pos + '\n');
+                motorPos[i] = pos;
+            }
+            this.Log('Position control activated');
+        } else {
+            this.Log('Can not activate because AVR0 is not attached');
+        }
+    } else if (on == '0') {
+        Deactivate();
+        this.Log('Position control deactivated');
+    } else {
+        this.Respond('Invalid argument for "active" command');
+    }
+}
+
+//-----------------------------------------------------------------------------
+// Deactivate position control and stop motors if necessary (no messages)
+function Deactivate()
+{
+    active = 0;
+    if (avrs[0]) avrs[0].SendCmd("c.halt\n");
+    PushData('D 0');
+}
+
+//-----------------------------------------------------------------------------
+// Push data to all web clients
 function PushData(str)
 {
     for (var i=0; i<conn.length; ++i) {
@@ -432,60 +567,49 @@ function ConnectToAdam()
     
     // handle incoming data from the ADAM-6017
     adam.on('data', function(data) {
-        if (data.length == 25) {
-            if (adamState == kAdamMissed) Log("Adam OK");
-            adamState = kAdamOK;
-            // read the returned values
-            for (var i=0, j=9; i<8; ++i, j+=2) {
-                adamValue[i] = data[j] * 256 + data[j+1];
-            }
-            if (verbose) Log("Adam values:", adamValue.join(' '));
-            
-            Calculate();            // calculate damper positions, loads, etc
-            if (active) Drive();    // drive motors if active control is on
-
-            if (fullPoll) {
-                // save in history and send data back to http clients
-                var t = AddToHistory(0, damperPosition);
-                PushData('F ' + (t % kPosHisLen) + ' ' +
-                         damperPosition.map( function(x) { return x.toFixed(4) } ).join(' ') + ' ' +
-                         damperAddWeight.map( function(x) { return x.toFixed(4) } ).join(' ') + ' ' +
-                         airPressure.toFixed(1));
-                // flash some LED's for the fun of it
-                if (t != flashTime) {
-                    var flashNew = (flashNum + 1) % flashPin.length;
-                    var cmd = "c."+flashPin[flashNum]+" 1;c."+
-                                   flashPin[flashNew]+" 0\n";
-                    for (var i=0; i<2; ++i) {
-                        if (avrs[i]) avrs[i].SendCmd(cmd);
-                    }
-                    flashNum = flashNew;
-                    flashTime = t;
-                }
-            }
+        if (data.length != 25) return;
+        if (adamState == kAdamMissed) Log("Adam OK");
+        adamState = kAdamOK;
+        // read the returned values
+        for (var i=0, j=9; i<8; ++i, j+=2) {
+            adamRaw[i] = data[j] * 256 + data[j+1];
         }
+        if (verbose) Log("Adam values:", adamRaw.join(' '));
+        
+        Calculate();            // calculate damper positions, loads, etc
+        if (active) Drive();    // drive motors if active control is on
+
+        if (!fullPoll) return;
+
+        // save in history and send data back to web clients
+        var t = AddToHistory(0, damperPosition);
+        PushData('F ' + (t % kPosHisLen) + ' ' +
+                 damperPosition.map( function(x) { return x.toFixed(4) } ).join(' ') + ' ' +
+                 damperAddWeight.map( function(x) { return x.toFixed(4) } ).join(' ') + ' ' +
+                 airPressure.toFixed(1));
+
+        FlashLEDs(t);   // flashy lights
     });
 
     // handle connection close
-    adam.on('close', function() {
-        adamState = kAdamBad;
-        if (adam) {
-            adam.destroy();
-            adam = null;
-        }
-    });
+    adam.on('close', CloseAdam);
 
     // handle communication errors
     adam.on('error', function() {
-        if (adamState == kAdamNotConnected) {
-            Log("Adam communication error");
-            adamState = kAdamBad;
-        }
-        if (adam) {
-            adam.destroy();
-            adam = null;
-        }
+        if (adamState == kAdamNotConnected) Log("Adam communication error");
+        CloseAdam();
     });
+}
+
+//-----------------------------------------------------------------------------
+// End communication with Adam
+function CloseAdam()
+{
+    if (adam) {
+        adam.destroy();
+        adam = null;
+    }
+    adamState = kAdamBad;
 }
 
 //=============================================================================
@@ -497,11 +621,7 @@ function FindAVRs()
 {
     var devs = usb.getDeviceList();
     for (var i=0; i<devs.length; ++i) {
-        if (devs[i].deviceDescriptor.idVendor  == kAtmel &&
-            devs[i].deviceDescriptor.idProduct == kEVK1101)
-        {
-            OpenAVR(devs[i]);
-        }
+        OpenAVR(devs[i]);
     }
 }
 
@@ -509,6 +629,12 @@ function FindAVRs()
 // Open communication with our AVR device
 function OpenAVR(device)
 {
+    if (device.deviceDescriptor.idVendor  != kAtmel ||
+        device.deviceDescriptor.idProduct != kEVK1101)
+    {
+        return; // (not our device)
+    }
+
     try {
         device.open();
         device.interfaces[0].claim();
@@ -525,26 +651,14 @@ function OpenAVR(device)
             endOut.transferType = usb.LIBUSB_TRANSFER_TYPE_BULK;
             endIn.timeout  = 1000;
             endOut.timeout = 1000;
-            endIn.startPoll(4, 256);
+            // (must install handlers before we start polling)
             endIn.on('data', HandleData);
             endIn.on('error', HandleError);
             endOut.on('error', HandleError);
+            endIn.startPoll(4, 256);
 
             // add member function to send command to AVR
-            device.SendCmd = function SendCmd(cmd) {
-                try {
-                    this.interfaces[0].endpoints[1].transfer(cmd, function(error) {
-                        if (error) {
-                            Log('AVR'+this.avrNum, 'send error');
-                            ForgetAVR(this);
-                        }
-                    });
-                }
-                catch (err) {
-                    Log('AVR'+this.avrNum, 'send exception');
-                    ForgetAVR(this);
-                }
-            };
+            device.SendCmd = SendCmd;
             // send initial command to get AVR serial number and software version
             device.SendCmd("a.ser;b.ver\n");
             break;
@@ -552,6 +666,25 @@ function OpenAVR(device)
     }
     catch (err) {
         Log('Error opening AVR device');
+    }
+}
+
+//-----------------------------------------------------------------------------
+// Send command to our AVR
+// Note: Command must be prefixed by a response ID (eg. "c." to ignore response)
+function SendCmd(cmd)
+{
+    try {
+        this.interfaces[0].endpoints[1].transfer(cmd, function(error) {
+            if (error) {
+                Log('AVR'+this.avrNum, 'send error');
+                ForgetAVR(this);
+            }
+        });
+    }
+    catch (err) {
+        Log('AVR'+this.avrNum, 'send exception');
+        ForgetAVR(this);
     }
 }
 
@@ -574,7 +707,7 @@ function ForgetAVR(deviceOrEndpoint)
 // Handle USB errors
 function HandleError(err)
 {
-    // if (err) Log(err);
+    // Log("AVR error!");
 }
 
 //-----------------------------------------------------------------------------
@@ -602,7 +735,7 @@ function HandleData(data)
         }
         if (id != 'e') {
             if (str.substr(0,2) != 'OK') {
-            //  Log('AVR'+avrNum, 'Bad response:', str);
+                Log('AVR'+avrNum, 'Bad response:', str);
                 continue;
             }
             str = str.substr(3);
@@ -657,9 +790,17 @@ function HandleResponse(avrNum, responseID, msg)
                 }
             }
             if (avr) {
-                // 1. enable watchdog timer
-                // 2. seand set up avr
-                avrs[avrNum].SendCmd('c.wdt 1;m0 on +;pa0-1 ++\n');
+                // enable watchdog timer
+                avrs[avrNum].SendCmd('c.wdt 1\n');
+                if (avrNum == 0) {
+                    // enable pull-ups for limit switches
+                    avrs[avrNum].SendCmd('c.pa0-' + (kNumLimit-1) + ' ' +
+                        Array(kNumLimit+1).join('+') + '\n');
+                    // set polarity of motor on sigals
+                    avrs[avrNum].SendCmd('c.m0 on +;m1 on +;m2 on +\n');
+                    // turn on motors
+                    avrs[avrNum].SendCmd('c.m0 on 1;m1 on 1;m2 on 1\n');
+                }
             } else {
                 avr = 'Unknown AVR ' + avrNum;
                 avrs[avrNum].SendCmd('z.wdt 0\n');  // disable watchdog on unknown AVR
@@ -695,6 +836,7 @@ function HandleResponse(avrNum, responseID, msg)
                     switch (a[i].substr(0,4)) {
                         case "SPD=":
                             motorSpd[n] = Number(a[i].substr(4));
+                            motorDir[n] = a[i].substr(4,1) == '-' ? 1 : 0;
                             break;
                         case "POS=":
                             motorPos[n] = Number(a[i].substr(4));
@@ -714,7 +856,7 @@ function HandleResponse(avrNum, responseID, msg)
         case 'g': { // g = poll limit switches
             var j = msg.indexOf('VAL=');
             if (j < 0 || msg.length - j < kNumLimit) {
-                avrs[0].SendCmd("halt\n");
+                avrs[0].SendCmd("c.halt\n");
                 Log("Poll error.  Motors halted");
                 for (var k=0; k<kNumLimit; ++k) {
                     limitSwitch[k] = 0;
@@ -733,8 +875,9 @@ function HandleResponse(avrNum, responseID, msg)
                         } else {
                             if (motorSpd[mot] < 0) continue;
                         }
-                        avrs[0].SendCmd("m" + mot + " halt\n");
-                        Log("M" + mot + " halted! (hit " + (k & 0x01 ? "lower" : "upper") + " limit switch)");
+                        avrs[0].SendCmd("c.m" + mot + " halt\n");
+                        var which = k & 0x01 ? "lower" : "upper";
+                        Log("M" + mot + " halted! (hit " + which + " limit switch)");
                     }
                 }
             }
@@ -752,6 +895,40 @@ function HandleResponse(avrNum, responseID, msg)
     return avrNum;
 }
 
+//-----------------------------------------------------------------------------
+// Ramp motor to specified speed (+ve = up, -ve = down)
+function RampMotor(n, spd)
+{
+    if (motorSpd[n] == spd) return;
+
+    var changeDir = '';
+
+    if (motorSpd[n] * spd < 0) {
+        spd = 0;    // must stop motor first
+    } else if (motorSpd[n] == 0 && spd != 0) {
+        // change motor direction if necessary
+        var dir = spd > 0 ? 0 : 1;
+        if (dir != motorDir[n]) changeDir = 'c.m' + n + ' dir ' + dir + ';';
+    }
+    avrs[0].SendCmd(changeDir + 'c.m' + n + ' ramp ' + Math.abs(spd) + '\n');
+}
+
+//-----------------------------------------------------------------------------
+// Flash AVR LED lights
+// Inputs: t=time in seconds
+function FlashLEDs(t)
+{
+    if (t == flashTime) return;     // don't flash twice in the same second
+    var flashNew = (flashNum + 1) % flashPin.length;
+    var cmd = "c."+flashPin[flashNum]+" 1;c."+
+                   flashPin[flashNew]+" 0\n";
+    for (var i=0; i<2; ++i) {
+        if (avrs[i]) avrs[i].SendCmd(cmd);
+    }
+    flashNum = flashNew;
+    flashTime = t;
+}
+
 //=============================================================================
 // Other functions
 
@@ -764,35 +941,6 @@ function HandleSigInt()
     Cleanup();
     // exit after giving time to log last message
     setTimeout(function() { process.exit(); }, 10);
-}
-
-//-----------------------------------------------------------------------------
-// Activate/deactivate position control with messages
-function Activate(arg)
-{
-    var on = { 'off':0, '0':0, 'on':1, '1':1 }[arg.toLowerCase()];
-    if (arg == '' || on == active) {
-        this.Respond('Active control is', (on==null ? 'currently' : 'already'),
-            (active=='1' ? 'on' : 'off'));
-    } else if (on == '1') {
-        active = 1;
-        PushData('D 1');
-        this.Log('Position control activated');
-    } else if (on == '0') {
-        Deactivate();
-        this.Log('Position control deactivated');
-    } else {
-        this.Respond('Invalid argument for "active" command');
-    }
-}
-
-//-----------------------------------------------------------------------------
-// Deactivate position control and stop motors if necessary (no messages)
-function Deactivate()
-{
-    active = 0;
-    if (avrs[0]) avrs[0].SendCmd("halt\n");
-    PushData('D 0');
 }
 
 //-----------------------------------------------------------------------------
@@ -880,12 +1028,13 @@ function Cleanup()
         if (i < 2) --foundAVRs;
         // release any still-open interfaces
         try {
-            avrsi.interfaces[0].release(true, function(error) { });
-            avrsi.close();
+            avri.interfaces[0].release(true, function(error) { });
+            avri.close();
         }
         catch (err) {
         }
     }
+    CloseAdam();
 }
 
 //-----------------------------------------------------------------------------

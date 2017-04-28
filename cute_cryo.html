@@ -221,7 +221,13 @@ function CommentKey(event)
 // Send command to CUTE server
 function Send(cmd)
 {
-    if (cuteServer) cuteServer.send(cmd);
+    try {
+        if (cuteServer) cuteServer.send(cmd);
+    }
+    catch (err) {
+        // (string was split to avoid messing up BBEdit colour syntax highlighting)
+        LogMsg('<span class=res>Error sending command to server<'+'/span><br/>');
+    }
 }
 
 // Activate/deactivate position control
@@ -496,6 +502,11 @@ function DrawPositionHistory()
                 continue;
             }
             var y = Math.round((1 - (his[j][i]-min)/rng) * scly + by);
+            if (y < 1) {
+                y = 1;
+            } else if (y > cy[kCanHis] - 1) {
+                y = cy[kCanHis] - 1;
+            }
             if (lasty == null) {
                 ctx.moveTo(bx+j, y);
             } else {
@@ -555,6 +566,17 @@ function AddToHistory(time, vals)
     }
 }
 
+// add message to log text
+function LogMsg(msg)
+{
+    var log = document.getElementById('log');
+    var lines = log.innerHTML.split('\n');
+    if (lines.length > kLogHisLen) lines.shift();
+    lines.push(msg);
+    log.innerHTML = lines.join('\n');
+    log.scrollTop = log.scrollHeight;
+}
+
 // Connect to and communicate with CUTE cryostat server
 function ConnectToServer()
 {
@@ -600,12 +622,7 @@ function ConnectToServer()
                     } break;
 
                     case 'C':   // console log
-                        var log = document.getElementById('log');
-                        var lines = log.innerHTML.split('\n');
-                        if (lines.length > kLogHisLen) lines.shift();
-                        lines.push(msg);
-                        log.innerHTML = lines.join('\n');
-                        log.scrollTop = log.scrollHeight;
+                        LogMsg(msg);
                         break;
 
                     case 'D': { // system active/inactive
@@ -632,7 +649,8 @@ function ConnectToServer()
                         DrawDamperLoads(v.splice(0,3));
                         // draw history plot if necessary
                         if (needDrawHis) DrawPositionHistory();
-                        air.innerHTML = airPressure = v[0];
+                        airPressure = v[0];
+                        air.innerHTML = airPressure.toFixed(1);
                     } break;
                 }
             };
