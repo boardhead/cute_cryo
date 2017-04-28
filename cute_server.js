@@ -117,8 +117,8 @@ var history = [];           // history of measured values
 var historyTime = -1;       // time of most recent history entry
 
 var intrvl;                 // interval timer for polling hardware
-var fullPoll = 0;
-var verbose = 0;
+var fullPoll = 0;           // flag set to report polling results back to clients
+var verbose = 0;            // flag to log all raw ADC measurements
 
 var linear = [0, 0, 0, 0, 0, 0];    // linear transducer measurements (mm)
 var damperPosition = [-1,-1,-1];    // positions of the 3 dampers (mm)
@@ -367,6 +367,7 @@ function HandleClientRequest(request)
 
         // send measurement history (packet "B")
         for (var i=history.length-1; i>=0; --i) {
+            if (history[i].length < 3) continue;    // (don't send empty entries)
             connection.SendData('B '+((historyTime - i) % kPosHisLen)+' '+
                          history[i][0].toFixed(4)+' '+
                          history[i][1].toFixed(4)+' '+
@@ -598,7 +599,7 @@ function ConnectToAdam()
 
     // handle communication errors
     adam.on('error', function() {
-        if (adamState == kAdamNotConnected) Log("Adam communication error");
+        if (adamState == kAdamNotConnected) Log("Adam not connected!");
         CloseAdam();
     });
 }
@@ -817,13 +818,7 @@ function HandleResponse(avrNum, responseID, msg)
         case 'c':   // c = ignore this response
             break;
 
-        case 'd':   // d = handle ADC read responses
-            var j = msg.indexOf('VAL=');
-            // (currently not used)
-            //if (j >= 0) {
-            //    // ie. "adc2 512"
-            //    var adcVal[msg.substr(3,1).Number()] = msg.substr(j+4).Number();
-            //}
+        case 'd':   // d = (currently not used)
             break;
 
         case 'e':   // e = manual AVR command
@@ -845,6 +840,7 @@ function HandleResponse(avrNum, responseID, msg)
                             break;
                     }
                 }
+                // inform clients periodically of current motor speeds
                 if (n==2 && fullPoll) {
                     var newSpd = motorSpd.join(' ');
                     if (lastSpd != newSpd) {
@@ -860,8 +856,9 @@ function HandleResponse(avrNum, responseID, msg)
             if (j < 0 || msg.length - j < kNumLimit) {
                 avrs[0].SendCmd("c.halt\n");
                 Log("Poll error.  Motors halted");
+                // safety fallback: assume we hit the limits
                 for (var k=0; k<kNumLimit; ++k) {
-                    limitSwitch[k] = kHitLimit; // safety fallback: assume we hit the limit
+                    limitSwitch[k] = kHitLimit;
                 }
             } else {
                 for (var k=0; k<kNumLimit; ++k) {
