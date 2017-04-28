@@ -13,7 +13,7 @@
 //              Clients interact with this server via the cute_cryo.html page.
 //
 // Revisions:   2017-03-16 - v0.01 P. Harvey created
-//              2017-04-28 - v0.9 PH - basically complete except calibrations
+//              2017-04-28 - v0.9 PH - Implemented control algorithm
 //
 // Syntax:      node cute_server.js
 //
@@ -25,10 +25,15 @@ const kServerVersion    = 'v0.9';
 const kAtmel            = 0x03eb;   // Atmel USB manufacturer ID
 const kEVK1101          = 0x2300;   // EVK-1101 USB device ID
 const kPosHisLen        = 600;      // position history length
-const kNumLimit         = 6;        // number of limit switches to poll: "PA0-<kNumLimit-1>"
 const kHardwarePollTime = 80;       // hardware polling time (ms)
 const kMaxBadPolls      = 3;        // number of bad polls before deactivating
 const kMotorSlow        = 100;      // slowest drive speed (steps/s)
+
+const kNumLimit         = 6;        // number of limit switches to poll: "PA0-<kNumLimit-1>"
+const kTopLimit         = 0;        // PA0 is a top limit (and PA2, PA4, ...)
+const kBotLimit         = 1;        // PA1 is a bottom limit (and PA3, PA5, ...)
+const kHitLimit         = 0;        // digital value if we hit the limit switch
+const kNotLimit         = 1;        // digital value if limit switch is not activated
 
 const kDamperForceConst = 0.5;      // damper force constant (kg/mm)
 const kLoadNom          = 35;       // nominal damper load at nominal air pressure (kg)
@@ -293,13 +298,10 @@ function Drive()
                 drive = -1;         // continue driving
             }
         }
-        if (drive) {
-            // don't attempt to drive if we hit the lab jack microswitch limit
-            if (drive > 0) {
-                if (limitSwitch[i*2] != 1) return;
-            } else {
-                if (limitSwitch[i*2 + 1] != 1) return;
-            }
+        // don't attempt to drive past limit of lab jack
+        if ((drive > 0 && limitSwitch[i*2 + kTopLimit] == kNotLimit) ||
+            (drive < 0 && limitSwitch[i*2 + kBotLimit] == kNotLimit))
+        {
             // drive faster if we are far away from our destination
             var away = Math.abs(pos - kPositionNom);
             if (away > kPositionTol * 4) {
@@ -859,24 +861,26 @@ function HandleResponse(avrNum, responseID, msg)
                 avrs[0].SendCmd("c.halt\n");
                 Log("Poll error.  Motors halted");
                 for (var k=0; k<kNumLimit; ++k) {
-                    limitSwitch[k] = 0;
+                    limitSwitch[k] = kHitLimit; // safety fallback: assume we hit the limit
                 }
             } else {
                 for (var k=0; k<kNumLimit; ++k) {
-                    if (msg.substr(j+4+k, 1) == '1') {
-                        limitSwitch[k] = 1;
+                    if (msg.substr(j+4+k, 1) == kNotLimit) {
+                        limitSwitch[k] = kNotLimit;
                     } else {
-                        limitSwitch[k] = 0;
+                        limitSwitch[k] = kHitLimit;
                         var mot = Math.floor(k / 2);
                         if (!motorSpd[mot]) continue;
-                        // odd-numbered switches are lower limits
-                        if (k & 0x01) {
+                        var isBottom = ((k & 0x01) == kBotLimit);
+                        if (isBottom) {
+                            // allow positive motor speed when at bottom limit
                             if (motorSpd[mot] > 0) continue;
                         } else {
+                            // allow negative motor speed when at top limit
                             if (motorSpd[mot] < 0) continue;
                         }
                         avrs[0].SendCmd("c.m" + mot + " halt\n");
-                        var which = k & 0x01 ? "lower" : "upper";
+                        var which = isBottom ? "lower" : "upper";
                         Log("M" + mot + " halted! (hit " + which + " limit switch)");
                     }
                 }
