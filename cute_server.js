@@ -76,6 +76,19 @@ var authorized = {
     '130.15.24.88' : 1
 };
 
+// calibration points for each Adam input
+// (piecewise linear interpolation between nearest points)
+// - points are raw/cal pairs sorted by increasing raw value
+var calibrate = [
+    [ 35316, 0, 39856, -2.3 ], // damper A top position (mm, 0 = at floor)
+    [ 35316, 0, 39856, -2.3 ], // damper B top position (mm, 0 = at floor)
+    [ 35316, 0, 39856, -2.3 ], // damper C top position (mm, 0 = at floor)
+    [ 35316, 0, 39856, -2.3 ], // lab jack A top position (mm, 0 = 35 kg load when at floor)
+    [ 35316, 0, 39856, -2.3 ], // lab jack B top position (mm, 0 = 35 kg load when at floor)
+    [ 35316, 0, 39856, -2.3 ], // lab jack C top position (mm, 0 = 35 kg load when at floor)
+    [ 0, kAirPressureNom, 10, kAirPressureNom + 1 ] // air pressure (hPa)
+];
+
 // online help (HTML format)
 var helpMessage =
     'C <table width="100%" class=tbl>' +
@@ -91,7 +104,8 @@ var helpMessage =
     '</table>';
 
 var adam;               // client for communicating with ADAM-6017
-var adamRaw = [ ];      // raw Adam ADC values (x8)
+var adamRaw = [];       // raw Adam ADC values (x8)
+var adamCal = [0,0,0,0,0,0,kAirPressureNom]; // calibrated Adam values
 var adamState = kAdamNotConnected;
 
 var usb = require('usb');
@@ -125,12 +139,10 @@ var intrvl;                 // interval timer for polling hardware
 var fullPoll = 0;           // flag set to report polling results back to clients
 var verbose = 0;            // flag to log all raw ADC measurements
 
-var linear = [0, 0, 0, 0, 0, 0];    // linear transducer measurements (mm)
 var damperPosition = [-1,-1,-1];    // positions of the 3 dampers (mm)
 var stagePosition = [-1,-1,-1];     // current position of top of jack stand (mm)
 var damperLoad = [0, 0, 0];         // current damper loads (kg)
 var damperAddWeight = [0, 0, 0];    // weights to add to the 3 dampers (kg)
-var airPressure = kAirPressureNom;  // measured air pressure (hPa)
 
 //-----------------------------------------------------------------------------
 // Main script
@@ -243,19 +255,23 @@ function PollHardware()
 // Calculate damper positions, loads, etc
 function Calculate()
 {
-    for (var i=0; i<6; ++i) {
-        // calculate linear distances (TEMPORARY)
-        linear[i] = (35316 - adamRaw[i]) * (16.17 - 13.87) / (39856 - 35316) + 0;
+    // do linear interpolations to get calibrated Adam readings
+    for (var i=0; i<calibrate.length; ++i) {
+        var raw = adamRaw[i];
+        for (var j=0, cal=calibrate[i]; ; j+=2) {
+            if (j + 4 >= cal.length || cal[j+2] >= raw) {
+                adamCal[i] = cal[j+1] + (raw - cal[j]) * (cal[j+3] - cal[j+1]) / (cal[j+2] - cal[j]);
+                break;
+            }
+        }
     }
-    // calculate air pressure (TEMPORARY)
-    airPressure = kAirPressureNom + adamRaw[6] / 10;
 
     // total force in kg due to air pressure difference
-    var f = (airPressure - kAirPressureNom) * kBellowArea / (100 * kGravity);
+    var f = (adamCal[6] - kAirPressureNom) * kBellowArea / (100 * kGravity);
 
     for (var i=0; i<3; ++i) {
-        damperPosition[i] = linear[i];
-        stagePosition[i] = linear[i+3];
+        damperPosition[i] = adamCal[i];
+        stagePosition[i] = adamCal[i+3];
         // calculate load on this damper
         damperLoad[i] = kLoadNom + (stagePosition[i] - damperPosition[i]) * kDamperForceConst;
         // calculate fraction of the force felt by this damper
@@ -380,10 +396,8 @@ function HandleClientRequest(request)
         // send measurement history (packet "B")
         for (var i=history.length-1; i>=0; --i) {
             if (history[i].length < 3) continue;    // (don't send empty entries)
-            connection.SendData('B '+((historyTime - i) % kPosHisLen)+' '+
-                         history[i][0].toFixed(4)+' '+
-                         history[i][1].toFixed(4)+' '+
-                         history[i][2].toFixed(4));
+            connection.SendData('B ' + ((historyTime - i) % kPosHisLen) +
+                                ' ' + history[i].join(' '));
         }
     }
     catch (err) {
@@ -432,10 +446,7 @@ function HandleServerCommand(message)
                 if (adamState != kAdamOK) {
                     this.Respond('Adam is not OK');
                 } else {
-                    Log('Raw:', adamRaw.join(' '));
-                    Log('Cal:', linear.map(function(x) { return x.toFixed(2) } ).join(' '), 
-                        airPressure.toFixed(1));
-                    Log('Loads:', damperLoad.map(function(x) { return x.toFixed(2) }).join(' '));
+                    LogReadings(1);
                 }
                 break;
 
@@ -589,7 +600,6 @@ function ConnectToAdam()
         for (var i=0, j=9; i<8; ++i, j+=2) {
             adamRaw[i] = data[j] * 256 + data[j+1];
         }
-        if (verbose) Log("Adam values:", adamRaw.join(' '));
         
         Calculate();            // calculate damper positions, loads, etc
         if (active) Drive();    // drive motors if active control is on
@@ -601,7 +611,7 @@ function ConnectToAdam()
         PushData('F ' + (t % kPosHisLen) + ' ' +
                  damperPosition.map( function(x) { return x.toFixed(4) } ).join(' ') + ' ' +
                  damperAddWeight.map( function(x) { return x.toFixed(4) } ).join(' ') + ' ' +
-                 airPressure.toFixed(1));
+                 adamCal[6].toFixed(3));
 
         FlashLEDs(t);   // flashy lights
     });
@@ -1024,6 +1034,17 @@ function Log(args)
 }
 
 //-----------------------------------------------------------------------------
+// Log all readings
+// Inputs: all=flag to log raw values and loads as well as calculated values
+function LogReadings(all)
+{
+    var cal = 'Cal: ' + adamCal.join(' ');
+    if (verbose || all) Log('Raw:', adamRaw.join(' '));
+    all ? Log(cal) : LogToFile(cal);
+    if (all) Log('Loads:', damperLoad.map(function(x) { return x.toFixed(2) }).join(' '));
+}
+
+//-----------------------------------------------------------------------------
 // Add to history of measurements
 // Inputs: index/value pairs
 // Returns: integer time of measurement
@@ -1045,15 +1066,15 @@ function AddToHistory(i,vals)
         entry = history[0];
     }
     if (vals) {
-        // copy current values into history
-        for (var j=0; j<vals.length; ++j) {
-            entry[j+i] = vals[j];
+        // copy current damper positions into history
+        for (var j=0; j<3; ++j) {
+            // (fixed to 4 decimals because these are for display only)
+            entry[j+i] = vals[j].toFixed(4);
         }
         // log our calculated values once per second
         if (logCalTime != t) {
             logCalTime = t;
-            LogToFile('Cal:', linear.map(function(x) { return x.toFixed(2) } ).join(' '), 
-                airPressure.toFixed(1));
+            LogReadings(0);
         }
     }
     return t;
