@@ -46,7 +46,10 @@ const kMotorStepsPer_mm = 4302;     // number of motor steps per mm of stage tra
 const kMotorTol         = 1;        // maximum error in motor position (mm)
 
 const kAirPressureNom   = 1300;     // nominal mine air pressure (hPa)
-const kVacuumArea       = 100;      // cross-section area of vacuum manifold (cm^2) (TEMPORARY)
+const kBellowDia        = 23.7;     // pulse tube bellow diameter (cm)
+const kBellowArea       = 3.1415926536 * (kBellowDia * kBellowDia) / 4;
+const kBellowPos        = 8.55;     // distance of bellow from centre (cm)
+const kDamperPos        = 36.3;     // damper radius position (cm)
 const kGravity          = 9.81;     // acceleration due to gravity (kg.m/s^2)
 
 // states for ADAM-6017 (adamState)
@@ -109,12 +112,14 @@ var flashTime = 0;
 
 var vals = [0,0,0];         // most recent measured values
 var motorSpd = [0,0,0];     // motor speeds
+var motorRunning = [0,0,0]; // flags for running motors
 var motorDir = [0,0,0];     // current motor directions
 var limitSwitch = [0,0,0,0,0,0]; // limit-switches: top,bottom for each stage (1=open)
 var lastSpd = '0 0 0';      // last motor speeds sent to clients (as string)
 var motorPos = [0,0,0];     // motor positions
 var history = [];           // history of measured values
 var historyTime = -1;       // time of most recent history entry
+var logCalTime = -1;        // time we last logged calculated values
 
 var intrvl;                 // interval timer for polling hardware
 var fullPoll = 0;           // flag set to report polling results back to clients
@@ -245,13 +250,19 @@ function Calculate()
     // calculate air pressure (TEMPORARY)
     airPressure = kAirPressureNom + adamRaw[6] / 10;
 
+    // total force in kg due to air pressure difference
+    var f = (airPressure - kAirPressureNom) * kBellowArea / (100 * kGravity);
+
     for (var i=0; i<3; ++i) {
-        damperPosition[i] = linear[i];  // (TEMPORARY)
-        // calculate load on this damper (TEMPORARY)
+        damperPosition[i] = linear[i];
         stagePosition[i] = linear[i+3];
-        damperLoad[i] = kLoadNom + (stagePosition[i] - linear[i]) * kDamperForceConst;
-        // calculate nominal load on this damper (factor of 3 is for 3 dampers)
-        var loadNom = kLoadNom - (airPressure - kAirPressureNom) * kVacuumArea / (300 * kGravity);
+        // calculate load on this damper
+        damperLoad[i] = kLoadNom + (stagePosition[i] - damperPosition[i]) * kDamperForceConst;
+        // calculate fraction of the force felt by this damper
+        // (the pulse tube is offset toward damper 0)
+        var frac = (1 + (i ? -1 : 2) * kBellowPos / kDamperPos) / 3;
+        // nominal load on the damper for this pressure
+        var loadNom = kLoadNom - f * frac;
         // this is how much weight we need to add to achieve the nominal load
         damperAddWeight[i] = loadNom - damperLoad[i];
     }
@@ -262,7 +273,7 @@ function Calculate()
 function Drive()
 {
     for (var i=0; i<3; ++i) {
-        // verify that motor position agrees with measured stage position
+        // check that motor position agrees with measured stage position
         if (Math.abs(motorPos[i] / kMotorStepsPer_mm - stagePosition[i]) > kMotorTol) {
             Log("Motor " + i + " error!  Position control deactivated");
             Deactivate();
@@ -288,7 +299,7 @@ function Drive()
             if (pos >= kPositionNom || load > kLoadMax - kLoadTol) {
                 RampMotor(i, 0);    // stop motor
             } else {
-                drive = 1;          // continue driving;
+                drive = 1;          // continue driving
             }
         } else if (motorSpd[i] < 0) {
             // stop if we have reached our goal or damper is near minimum
@@ -298,7 +309,8 @@ function Drive()
                 drive = -1;         // continue driving
             }
         }
-        // don't attempt to drive past limit of lab jack
+        // don't attempt to continue driving past limit of lab jack
+        // (motor would have halted automatically if we hit a limit)
         if ((drive > 0 && limitSwitch[i*2 + kTopLimit] == kNotLimit) ||
             (drive < 0 && limitSwitch[i*2 + kBotLimit] == kNotLimit))
         {
@@ -840,12 +852,32 @@ function HandleResponse(avrNum, responseID, msg)
                             break;
                     }
                 }
-                // inform clients periodically of current motor speeds
-                if (n==2 && fullPoll) {
-                    var newSpd = motorSpd.join(' ');
-                    if (lastSpd != newSpd) {
-                        PushData('E ' + newSpd);
-                        lastSpd = newSpd;
+                if (n==2) {
+                    var changed = 0;
+                    for (var i=0; i<3; ++i) {
+                        if (!motorSpd[i] != !motorRunning[i]) {
+                            changed = 1;
+                            motorRunning[i] = motorSpd[i];
+                        }
+                    }
+                    if (changed) {
+                        var running = [];
+                        for (var i=0; i<3; ++i) {
+                            if (motorRunning[i]) running.push(i);
+                        }
+                        if (running.length) {
+                            LogToFile("Motors running:", running.join(' '));
+                        } else {
+                            LogToFile("Motors stopped");
+                        }
+                    }
+                    // inform clients periodically of current motor speeds
+                    if (fullPoll) {
+                        var newSpd = motorSpd.join(' ');
+                        if (lastSpd != newSpd) {
+                            PushData('E ' + newSpd);
+                            lastSpd = newSpd;
+                        }
                     }
                 }
             }
@@ -911,6 +943,7 @@ function RampMotor(n, spd)
         var dir = spd > 0 ? 0 : 1;
         if (dir != motorDir[n]) changeDir = 'c.m' + n + ' dir ' + dir + ';';
     }
+
     avrs[0].SendCmd(changeDir + 'c.m' + n + ' ramp ' + Math.abs(spd) + '\n');
 }
 
@@ -957,10 +990,11 @@ function EscapeHTML(str)
 }
 
 //-----------------------------------------------------------------------------
-// Log message to console and file
-function Log()
+// Write message to log file
+// Inputs: string(s) to log
+// Returns: logged string
+function LogToFile(args)
 {
-    var msg;
     var d = new Date();
     if (arguments.length) {
         msg = d.getFullYear() + '-' + Pad2(d.getMonth()+1) + '-' + Pad2(d.getDate()) + ' ' +
@@ -969,12 +1003,21 @@ function Log()
     } else {
         msg = '';
     }
-    console.log(msg);
     fs.appendFile('cute_server_'+d.getFullYear()+Pad2(d.getMonth()+1)+'.log', msg+'\n', 
         function(error) {
             if (error) console.log(error, 'writing log file');
         }
     );
+    return msg;
+}
+
+//-----------------------------------------------------------------------------
+// Log message to console and file
+function Log(args)
+{
+    var msg = LogToFile.apply(this, arguments);
+    // log to console
+    console.log(msg);
     // send back to clients
     PushData('C ' +  EscapeHTML(msg) + '<br/>');
 }
@@ -1001,8 +1044,15 @@ function AddToHistory(i,vals)
         entry = history[0];
     }
     if (vals) {
+        // copy current values into history
         for (var j=0; j<vals.length; ++j) {
             entry[j+i] = vals[j];
+        }
+        // log our calculated values once per second
+        if (logCalTime != t) {
+            logCalTime = t;
+            LogToFile('Cal:', linear.map(function(x) { return x.toFixed(2) } ).join(' '), 
+                airPressure.toFixed(1));
         }
     }
     return t;
