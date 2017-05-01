@@ -853,6 +853,7 @@ function HandleResponse(avrNum, responseID, msg)
                     }
                 }
                 if (n==2) {
+                    // log a message if any of the motors turned on or off
                     var changed = 0;
                     for (var i=0; i<3; ++i) {
                         if (!motorSpd[i] != !motorRunning[i]) {
