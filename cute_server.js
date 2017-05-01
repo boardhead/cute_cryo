@@ -1038,7 +1038,7 @@ function Log(args)
 // Inputs: all=flag to log raw values and loads as well as calculated values
 function LogReadings(all)
 {
-    var cal = 'Cal: ' + adamCal.join(' ');
+    var cal = 'Cal: ' + adamCal.map(function(x) { return x.toFixed(2) }).join(' ');
     if (verbose || all) Log('Raw:', adamRaw.join(' '));
     all ? Log(cal) : LogToFile(cal);
     if (all) Log('Loads:', damperLoad.map(function(x) { return x.toFixed(2) }).join(' '));
