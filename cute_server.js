@@ -827,7 +827,7 @@ function HandleResponse(avrNum, responseID, msg)
                     avrs[avrNum].SendCmd('c.m0 on 1;m1 on 1;m2 on 1\n');
                 }
             } else {
-                avr = 'Unknown AVR ' + avrNum;
+                avr = 'Unknown AVR';
                 avrs[avrNum].SendCmd('z.wdt 0\n');  // disable watchdog on unknown AVR
             }
             Log(avr, 'attached (s/n', msg + ')');
