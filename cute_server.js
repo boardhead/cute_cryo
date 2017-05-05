@@ -42,7 +42,7 @@ const kLoadMin          = 20;       // minimum damper load (kg)
 const kLoadTol          = 5;        // damper load tolerance (kg)
 const kPositionNom      = 1;        // nominal position of damper top (mm)
 const kPositionTol      = 0.1;      // tolerance in damper position (mm)
-const kMotorStepsPer_mm = 4302;     // number of motor steps per mm of stage travel
+const kMotorStepsPer_mm = 4266.67;  // number of motor steps per mm of stage travel (16*2*200steps/1.5mm  pitch)
 const kMotorTol         = 1;        // maximum error in motor position (mm)
 
 const kAirPressureNom   = 1300;     // nominal mine air pressure (hPa)
@@ -80,12 +80,12 @@ var authorized = {
 // (piecewise linear interpolation between nearest points)
 // - points are raw/cal pairs sorted by increasing raw value
 var calibrate = [
-    [ 35316, 0, 39856, -2.3 ], // damper A top position (mm, 0 = at floor)
-    [ 35316, 0, 39856, -2.3 ], // damper B top position (mm, 0 = at floor)
-    [ 35316, 0, 39856, -2.3 ], // damper C top position (mm, 0 = at floor)
-    [ 35316, 0, 39856, -2.3 ], // lab jack A top position (mm, 0 = 35 kg load when at floor)
-    [ 35316, 0, 39856, -2.3 ], // lab jack B top position (mm, 0 = 35 kg load when at floor)
-    [ 35316, 0, 39856, -2.3 ], // lab jack C top position (mm, 0 = 35 kg load when at floor)
+    [ 35316, 0, 39856, 2.3 ], // damper A top position (mm, 0 = at floor)
+    [ 35316, 0, 39856, 2.3 ], // damper B top position (mm, 0 = at floor)
+    [ 35316, 0, 39856, 2.3 ], // damper C top position (mm, 0 = at floor)
+    [ 35316, 0, 39856, 2.3 ], // lab jack A top position (mm, 0 = 35 kg load when at floor)
+    [ 35316, 0, 39856, 2.3 ], // lab jack B top position (mm, 0 = 35 kg load when at floor)
+    [ 35316, 0, 39856, 2.3 ], // lab jack C top position (mm, 0 = 35 kg load when at floor)
     [ 0, kAirPressureNom, 10, kAirPressureNom + 1 ] // air pressure (hPa)
 ];
 
