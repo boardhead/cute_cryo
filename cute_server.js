@@ -45,12 +45,14 @@ const kPositionTol      = 0.1;      // tolerance in damper position (mm)
 const kMotorStepsPer_mm = 4266.67;  // number of motor steps per mm of stage travel (16*2*200steps/1.5mm  pitch)
 const kMotorTol         = 1;        // maximum error in motor position (mm)
 
+const kPi               = 3.1415926536;
+const kGravity          = 9.81;     // acceleration due to gravity (kg.m/s^2)
+
 const kAirPressureNom   = 1300;     // nominal mine air pressure (hPa)
 const kBellowDia        = 23.7;     // pulse tube bellow diameter (cm)
-const kBellowArea       = 3.1415926536 * (kBellowDia * kBellowDia) / 4;
+const kBellowArea       = kPi * (kBellowDia * kBellowDia) / 4;
 const kBellowPos        = 8.55;     // distance of bellow from centre (cm)
 const kDamperPos        = 36.3;     // damper radius position (cm)
-const kGravity          = 9.81;     // acceleration due to gravity (kg.m/s^2)
 
 // states for ADAM-6017 (adamState)
 const kAdamBad          = -1;       // communication error
@@ -66,7 +68,7 @@ var avrSN = [
     'ffffffff3850313339302020ff0d0b'    // AVR1
 ];
 
-var adamIP = "130.15.24.85";    // ADAM-6017 IP
+var adamIP = "130.15.24.86";    // ADAM-6017 IP
 var adamPort = 502;             // ADAM-6017 port number
 
 // IP's that are allowed to connect to the server
@@ -80,7 +82,7 @@ var authorized = {
 // (piecewise linear interpolation between nearest points)
 // - points are raw/cal pairs sorted by increasing raw value
 var calibrate = [
-    [ 35316, 0, 39856, 2.3 ], // damper A top position (mm, 0 = at floor)
+    [ 20706, 0, 33943, 2.0 ], // damper A top position (mm, 0 = at floor)
     [ 35316, 0, 39856, 2.3 ], // damper B top position (mm, 0 = at floor)
     [ 35316, 0, 39856, 2.3 ], // damper C top position (mm, 0 = at floor)
     [ 35316, 0, 39856, 2.3 ], // lab jack A top position (mm, 0 = 35 kg load when at floor)
@@ -93,7 +95,7 @@ var calibrate = [
 var helpMessage =
     'C <table width="100%" class=tbl>' +
     '<tr><td colspan=4>CUTE Commands:</th></tr>' +
-    '<tr><td class=nr>/active [on|off]</td><td>- get/set active control</td>' +
+    '<tr><td class=nr>/active [on|off|start]</td><td>- get/set active control</td>' +
         '<td class=nr>/log MSG</td><td>- enter log message</td></tr>' +
     '<tr><td class=nr>/avr# CMD</td><td>- send AVR command</td>' +
         '<td class=nr>/name [WHO]</td><td>- get/set client name</td></tr>' +
@@ -324,6 +326,12 @@ function Drive()
             } else {
                 drive = -1;         // continue driving
             }
+        } else if (active == 2) {
+            if (pos < kPositionNom) {
+                drive = 1;
+            } else if (pos > kPositionNom) {
+                drive = -1;
+            }
         }
         // don't attempt to continue driving past limit of lab jack
         // (motor would have halted automatically if we hit a limit)
@@ -341,6 +349,7 @@ function Drive()
             RampMotor(i, drive * kMotorSlow);
         }
     }
+    if (active == 2) active = 1;
 }
 
 //=============================================================================
@@ -531,13 +540,16 @@ function GetAddr(sock)
 // Activate/deactivate position control with messages
 function Activate(arg)
 {
-    var on = { 'off':0, '0':0, 'on':1, '1':1 }[arg.toLowerCase()];
+    var on = { 'off':0, '0':0, 'on':1, '1':1, 'start':2, '2':2 }[arg.toLowerCase()];
     if (arg == '' || on == active) {
         this.Respond('Active control is', (on==null ? 'currently' : 'already'),
-            (active=='1' ? 'on' : 'off'));
-    } else if (on == '1') {
+            (active=='0' ? 'off' : 'on'));
+    } else if (on == '0') {
+        Deactivate();
+        this.Log('Position control deactivated');
+    } else if (on == '1' || on == '2') {
         if (avrs[0]) {
-            active = 1;
+            active = (on=='1' ? 1 : 2);
             PushData('D 1');
             // turn on motors and set zero position to stagePosition = 0
             for (var i=0; i<3; ++i) {
@@ -549,9 +561,6 @@ function Activate(arg)
         } else {
             this.Log('Can not activate because AVR0 is not attached');
         }
-    } else if (on == '0') {
-        Deactivate();
-        this.Log('Position control deactivated');
     } else {
         this.Respond('Invalid argument for "active" command');
     }
