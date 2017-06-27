@@ -27,9 +27,6 @@ const kEVK1101          = 0x2300;   // EVK-1101 USB device ID
 const kPosHisLen        = 600;      // position history length
 const kHardwarePollTime = 80;       // hardware polling time (ms)
 const kMaxBadPolls      = 3;        // number of bad polls before deactivating
-const kMotorSlow        = 50;       // slowest drive speed (position within tolerance) (steps/s)
-const kMotorMed         = 200;      // medium drive speed (steps/s)
-const kMotorFast        = 1000;     // fast drive speed (steps/s)
 
 const kNumLimit         = 6;        // number of limit switches to poll: "PA0-<kNumLimit-1>"
 const kTopLimit         = 0;        // PA0 is a top limit (and PA2, PA4, ...)
@@ -45,7 +42,11 @@ const kLoadTol          = 5;        // damper load tolerance (kg)
 const kPositionNom      = 1;        // nominal position of damper top (mm)
 const kPositionTol      = 0.1;      // tolerance in damper position (mm)
 const kPositionFast     = 0.4;      // drive motor fast if further away than this (mm)
-const kMotorStepsPer_mm = 4266.67;  // number of motor steps per mm of stage travel (16*2*200steps/1.5mm  pitch)
+
+const kMotorSlow        = 50;       // slowest drive speed (position within tolerance) (steps/s)
+const kMotorMed         = 200;      // medium drive speed (steps/s)
+const kMotorFast        = 1000;     // fast drive speed (steps/s)
+const kMotorStepsPer_mm = 4266.667; // number of motor steps per mm of stage travel (16*2*200steps/1.5mm  pitch)
 const kMotorTol         = 1;        // maximum error in motor position (mm)
 
 const kPi               = 3.1415926536;
