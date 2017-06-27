@@ -27,7 +27,9 @@ const kEVK1101          = 0x2300;   // EVK-1101 USB device ID
 const kPosHisLen        = 600;      // position history length
 const kHardwarePollTime = 80;       // hardware polling time (ms)
 const kMaxBadPolls      = 3;        // number of bad polls before deactivating
-const kMotorSlow        = 100;      // slowest drive speed (steps/s)
+const kMotorSlow        = 50;       // slowest drive speed (position within tolerance) (steps/s)
+const kMotorMed         = 200;      // medium drive speed (steps/s)
+const kMotorFast        = 1000;     // fast drive speed (steps/s)
 
 const kNumLimit         = 6;        // number of limit switches to poll: "PA0-<kNumLimit-1>"
 const kTopLimit         = 0;        // PA0 is a top limit (and PA2, PA4, ...)
@@ -42,6 +44,7 @@ const kLoadMin          = 20;       // minimum damper load (kg)
 const kLoadTol          = 5;        // damper load tolerance (kg)
 const kPositionNom      = 1;        // nominal position of damper top (mm)
 const kPositionTol      = 0.1;      // tolerance in damper position (mm)
+const kPositionFast     = 0.4;      // drive motor fast if further away than this (mm)
 const kMotorStepsPer_mm = 4266.67;  // number of motor steps per mm of stage travel (16*2*200steps/1.5mm  pitch)
 const kMotorTol         = 1;        // maximum error in motor position (mm)
 
@@ -327,6 +330,7 @@ function Drive()
                 drive = -1;         // continue driving
             }
         } else if (active == 2) {
+            // start motors even if within tolerance
             if (pos < kPositionNom) {
                 drive = 1;
             } else if (pos > kPositionNom) {
@@ -340,13 +344,15 @@ function Drive()
         {
             // drive faster if we are far away from our destination
             var away = Math.abs(pos - kPositionNom);
-            if (away > kPositionTol * 4) {
-                drive *= 10;
+            if (away > kPositionFast) {
+                drive *= kMotorFast;
             } else if (away > kPositionTol) {
-                drive *= 2;
+                drive *= kMotorMed;
+            } else {
+                drive *= kMotorSlow;
             }
             // drive the motor in the specified direction
-            RampMotor(i, drive * kMotorSlow);
+            RampMotor(i, drive);
         }
     }
     if (active == 2) active = 1;
@@ -550,7 +556,7 @@ function Activate(arg)
     } else if (on == '1' || on == '2') {
         if (avrs[0]) {
             active = (on=='1' ? 1 : 2);
-            PushData('D 1');
+            PushData('D 1');    // tell web clients that we are active
             // turn on motors and set zero position to stagePosition = 0
             for (var i=0; i<3; ++i) {
                 var pos = Math.floor(stagePosition[i] * kMotorStepsPer_mm);
@@ -572,7 +578,7 @@ function Deactivate()
 {
     active = 0;
     if (avrs[0]) avrs[0].SendCmd("c.halt\n");
-    PushData('D 0');
+    PushData('D 0');    // tell web clients that we have deactivated
 }
 
 //-----------------------------------------------------------------------------
