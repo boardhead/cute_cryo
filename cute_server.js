@@ -321,21 +321,21 @@ function Drive()
             if (pos >= kPositionNom || load > kLoadMax - kLoadTol) {
                 RampMotor(i, 0);    // stop motor
             } else {
-                drive = 1;          // continue driving
+                drive = 1;          // continue driving up
             }
         } else if (motorSpd[i] < 0) {
             // stop if we have reached our goal or damper is near minimum
             if (pos <= kPositionNom || load < kLoadMin + kLoadTol) {
                 RampMotor(i, 0);    // stop motor
             } else {
-                drive = -1;         // continue driving
+                drive = -1;         // continue driving down
             }
         } else if (active == 2) {
             // start motors even if within tolerance
             if (pos < kPositionNom) {
-                drive = 1;
+                drive = 1;          // drive up
             } else if (pos > kPositionNom) {
-                drive = -1;
+                drive = -1;         // drive down
             }
         }
         // don't attempt to continue driving past limit of lab jack
