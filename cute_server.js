@@ -68,8 +68,8 @@ const kAdamOK           = 3;        // Adam responded OK
 const kBanner = '---- CUTE Cryostat Position Control ' + kServerVersion + ' ----';
 
 var avrSN = [
-    'ffffffff3850313339302020ff1011',   // AVR0
-    'ffffffff3850313339302020ff0d0b'    // AVR1
+    'ffffffff3850313339302020ff0e20',   // AVR0
+    'ffffffff3850313339302020ff0d12'    // AVR1
 ];
 
 var adamIP = "130.15.24.86";    // ADAM-6017 IP
