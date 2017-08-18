@@ -1,3 +1,4 @@
 #!/bin/sh
-nohup node cute_server.js >/dev/null 2>>cute_server.err &
+cd ~/log
+nohup node ~/source/cute_cryo/cute_server.js >/dev/null 2>>cute_server.err &
 
