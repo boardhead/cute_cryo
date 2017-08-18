@@ -735,7 +735,7 @@ function ForgetAVR(deviceOrEndpoint)
 {
     var avrNum = deviceOrEndpoint.avrNum;
     if (avrNum == null) {
-        Log('Unknown AVR detached!');
+        // Log('Unknown USB device detached!');
     } else if (avrs[avrNum]) {
         Log('AVR'+avrNum, 'detached!');
         if (avrNum < 2) --foundAVRs;
