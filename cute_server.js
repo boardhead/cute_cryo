@@ -86,13 +86,17 @@ var authorized = {
 // (piecewise linear interpolation between nearest points)
 // - points are raw/cal pairs sorted by increasing raw value
 var calibrate = [
-    [ 20706, 0, 33943, 2.0 ], // damper A top position (mm, 0 = at floor)
-    [ 35316, 0, 39856, 2.3 ], // damper B top position (mm, 0 = at floor)
-    [ 35316, 0, 39856, 2.3 ], // damper C top position (mm, 0 = at floor)
-    [ 35316, 0, 39856, 2.3 ], // lab jack A top position (mm, 0 = 35 kg load when at floor)
-    [ 35316, 0, 39856, 2.3 ], // lab jack B top position (mm, 0 = 35 kg load when at floor)
-    [ 35316, 0, 39856, 2.3 ], // lab jack C top position (mm, 0 = 35 kg load when at floor)
-    [ 0, kAirPressureNom, 10, kAirPressureNom + 1 ] // air pressure (hPa)
+    // channels 0-2: 4-20 mA; optoNCDT linear sensors
+    [ 20706, 0, 33943, 2.0 ], // mm - damper A top position (0 = at floor)
+    [ 35316, 0, 39856, 2.3 ], // mm - damper B top position (0 = at floor)
+    [ 35316, 0, 39856, 2.3 ], // mm - damper C top position (0 = at floor)
+    // channels 3-5: 0-5 V; hall-effect linear sensors
+    [ 35316, 0, 39856, 2.3 ], // mm - lab jack A top position (0 = 35 kg load when at floor)
+    [ 35316, 0, 39856, 2.3 ], // mm - lab jack B top position (0 = 35 kg load when at floor)
+    [ 35316, 0, 39856, 2.3 ], // mm - lab jack C top position (0 = 35 kg load when at floor)
+    // channel 6: 0-5 V; atmospheric pressure sensor
+    [ 0, 0, 65535, 1723.69 ]  // hPa - nominal transducer calibration: 5V=25psi
+    // channel 7: 0-10 V; unused
 ];
 
 // online help (HTML format)
