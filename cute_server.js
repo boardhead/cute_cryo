@@ -46,7 +46,7 @@ const kPositionFast     = 0.4;      // drive motor fast if further away than thi
 const kMotorSlow        = 50;       // slowest drive speed (position within tolerance) (steps/s)
 const kMotorMed         = 200;      // medium drive speed (steps/s)
 const kMotorFast        = 1000;     // fast drive speed (steps/s)
-const kMotorStepsPer_mm = 4266.667; // number of motor steps per mm of stage travel (16*2*200steps/1.5mm  pitch)
+const kMotorStepsPer_mm = 4266.667; // number of motor steps per mm of stage travel (16*2*200steps/1.5mm pitch)
 const kMotorTol         = 1;        // maximum error in motor position (mm)
 
 const kPi               = 3.1415926536;
