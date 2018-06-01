@@ -17,6 +17,10 @@ m0 - PB00/PB01/PB05
 m1 - PB02/PB03/PB06
 m2 - PB10/PB11/PB08
 
+PWM (pulse-width modulation output)
+---
+p6 - PA31
+
 LEDs
 ----
 0 - PA07

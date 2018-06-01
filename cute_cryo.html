@@ -603,7 +603,7 @@ function ConnectToServer()
                 var c = message.data.substr(0,1);
                 var msg = message.data.substr(2);
                 switch (c) {
-                    case 'A': { // damper positions
+                    case 'A': { // damper positions [no longer used]
                         var v = msg.split(' ').map(Number);
                         var t = v.shift();
                         DrawDamperPositions(v);
