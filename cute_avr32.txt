@@ -128,7 +128,7 @@ burn.bat
 
 batchisp -hardware usb -device at32uc3b0256 -operation erase f loadbuffer "c:\Documents and Settings\Phil\My Documents\workspace\%1\Debug\%1.elf" program verify start reset 0
 
-Available commands implemented on the AVR32 (ver 1.12)
+Available commands implemented on the AVR32 (ver 1.14)
 ------------------------------------------------------
 
   pa#[-#] [0|1|-|+] - get/set/reset/pull-up programmable i/o A channel
