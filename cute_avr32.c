@@ -18,6 +18,7 @@
 //                                      and added "p6" command
 //              2016/03/17 - PH v1.12 - changed motor/pwm "run" command to "spd"
 //              2017/01/30 - PH v1.13 - added ability to specify ADC range
+//              2018/07/19 - PH v1.14 - added motor step command
 //
 // Notes:       The embedded software is C because the inherent indirect
 //              addressing of C++ objects is too inefficient
@@ -56,7 +57,7 @@
 #define CUTE   		// use for CUTE expt
 
 //#define DEBUG       // enable debugging code
-#define VERSION		1.13
+#define VERSION		1.14
 
 #define NUM_MOTORS          3
 #define NUM_ADCS            4
@@ -335,7 +336,12 @@ long            m0_rampEndTime;         // time at end of ramp (TC ticks)
 float           m0_rampScl = (float)(kClockFreq / kPrescale) / kMotorAccDefault;
 int             m0_minSpeed = kMinSpeed;
 unsigned char   m0_stopFlag = 0;        // ISR flag to stop motor
+unsigned char   m0_stepMode = 0;        // 0=done, 1=ramp up, 2=cruise, 3=ramp down
 int             m0_src = 3;             // source clock
+long            m0_stepFrom;            // step start
+long            m0_stepTo;              // step end
+long            m0_rampEnd;             // step where ramp was completed
+long            m0_stepNext;            // step where we have to change something
 
 long            m1_motorPos = 0;
 unsigned char   m1_motorDir = 0;
@@ -490,6 +496,21 @@ static void m0_irq(void)
    // re-enable interrupts so we don't miss a count
    Enable_interrupt_level(0);
 
+   if (m0_stepMode && ((long)((m0_motorPos - m0_stepNext) * (1 - 2 * (long)m0_motorDir)) > -2)) {
+       switch (m0_stepMode) {
+          case 1:   // ramp down in middle of ramping up
+          case 2:   // ramp down from cruising
+             m0_stepMode = 3;
+             m0_stepNext = m0_stepTo;
+             m0_rampTo = 60000; // = m0_actClock / m0_minSpeed
+             m0_rampFlag = 2;
+             break;
+          case 3:   // time to stop
+             m0_stepMode = 0;
+             m0_rampFlag = 3;   // halt!
+             break;
+       }
+   }
    if (m0_rampFlag) {
        m0_stopFlag = m0_rampFlag;
        m0_rampFlag = 0;
@@ -515,11 +536,22 @@ static void m0_irq(void)
 	   if (m0_rampTime >= m0_rampEndTime) {
 		   // stop TC if stopping motor
 		   if (m0_stopFlag >= 2) {
+		       if ((m0_stopFlag == 2) && m0_stepMode) {
+		          // don't stop until we reach our end point
+		          in = 0;
+		          return;
+		       }
 		       tc_stop(&AVR32_TC, TC0_CHANNEL);
 		       m0_curSpeed = kMinSpeed;
 		       m0_running = 0;
+               m0_stepMode = 0;
 		   } else {
 		       m0_curSpeed = m0_endSpeed;
+		       if (m0_stepMode) {
+		          m0_stepMode = 2;
+		          // next mode is when we have to start ramping down
+		          m0_stepNext = m0_stepTo - (m0_motorPos - m0_stepFrom);
+		       }
 		   }
 		   m0_ramping = 0;
 	   } else {
@@ -1016,14 +1048,34 @@ void resurfacer_task()
                     sprintf(msg_buff, "m%d SPD=%c%d POS=%ld CLK=%d RC=%u LAT=%d CNT=%d",
 						mot_num, dir, spd, pos, src, rc, lat, count);
 #else
-                    sprintf(msg_buff, "m%d SPD=%c%d POS=%ld CLK=%d",
-						mot_num, dir, spd, pos, src);
+                    if (m0_stepMode && mot_num == 0) {
+                       sprintf(msg_buff, "m%d SPD=%c%d POS=%ld MOD=%d NXT=%ld",
+                            mot_num, dir, spd, pos, (int)m0_stepMode, m0_stepNext);
+                    } else {
+                       sprintf(msg_buff, "m%d SPD=%c%d POS=%ld CLK=%d",
+						    mot_num, dir, spd, pos, src);
+			        }
 #endif
 					ok = 1;
-				} else if (!strcmp(cmd,"stop") || !strcmp(cmd,"ramp")) {
-					int speed;
+				} else if (!strcmp(cmd,"stop") || !strcmp(cmd,"ramp") || !strcmp(cmd,"step")) {
+					int speed, step=0;
+					long dest;
 				    if (!strcmp(cmd,"stop")) {
 					    speed = 0;
+					} else if (!strcmp(cmd,"step")) {
+                        if (m0_running) { err = "already running"; break; }
+					    if (!dat) { err = "no destination"; break; }
+    					if (!sscanf(dat, "%ld", &dest)) {
+    					    err = "invalid destination";
+    					    break;
+    					}
+    					dat = strtok(NULL, " ");
+    					if (!dat) { err = "no speed"; break; }
+    					if (!sscanf(dat, "%d", &speed)) {
+    					    err = "invalid speed";
+    					    break;
+    					}
+    					step = 1;
 					} else {
 					    if (!dat) { err = "no speed"; break; }
     					if (!sscanf(dat, "%d", &speed)) {
@@ -1031,6 +1083,7 @@ void resurfacer_task()
     					    break;
     					}
 					}
+					m0_stepMode = 0;    // make sure step mode is off initially
                     unsigned char rampFlag = 1;
                     unsigned int rc;
                     unsigned long clock, rcl;
@@ -1043,6 +1096,20 @@ void resurfacer_task()
                         } else if (!m0_motorOn) {
                             err = "m0 is not on";
                             break;
+                        } else if (step) {
+                            if (dest == m0_motorPos) {
+                                err = "at destination";
+                                break;
+                            }
+                            unsigned char dir = (dest - m0_motorPos > 0) ? 0 : 1;
+                            if (m0_motorDir != dir) {
+                                m0_motorDir = dir;
+                                setPin(sMotor[0].dir, m0_motorDir ^ sMotor[0].dirInv);
+                            }
+                            m0_stepMode = 1;
+                            m0_stepFrom = m0_motorPos;
+                            m0_stepTo = dest;
+                            m0_stepNext = (m0_stepTo + m0_stepFrom) / 2;
                         }
                         clock = m0_actClock;
                         rcl = clock / speed;
@@ -1065,6 +1132,9 @@ void resurfacer_task()
                         } else if (!m1_motorOn) {
                             err = "m1 is not on";
                             break;
+                        } else if (step) {
+                            err = "m1 doesn't step";
+                            break;
                         }
                         clock = m1_actClock;
                         rcl = clock / speed;
@@ -1086,6 +1156,9 @@ void resurfacer_task()
                             ++rampFlag;
                         } else if (!m2_motorOn) {
                             err = "m2 is not on";
+                            break;
+                        } else if (step) {
+                            err = "m2 doesn't step";
                             break;
                         }
                         clock = m2_actClock;

@@ -181,6 +181,10 @@ Available commands implemented on the AVR32 (ver 1.12)
 
   m# acc [ACC]  - get/set motor acceleration (integer steps/sec/sec)
 
+  m0 step POS SPD
+                - step motor 0 to specified POS, ramping to specified SPD
+                  (motor must be on, but direction is set automatically)
+  
   adc#          - read value of internal AVR 10-bit ADC # (0-3)
                     adc0 = AVR32 ADC0 (pa03)
                     adc1 = AVR32 ADC1 (pa04)
