@@ -9,6 +9,9 @@
   <dt>cute_avr32.txt</dt>
   <dd>Documentation for AVR32 commands and wiring.</dd>
 
+  <dt>cute_avr32.hex</dt>
+  <dd>Compiled code in hex form for programming AVR32 using dfu-programmer.</dd>
+
   <dt>cute_cryo.html</dt>
   <dd>Cryostat position control user interface.</dd>
 
