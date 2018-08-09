@@ -18,7 +18,7 @@
 //                                      and added "p6" command
 //              2016/03/17 - PH v1.12 - changed motor/pwm "run" command to "spd"
 //              2017/01/30 - PH v1.13 - added ability to specify ADC range
-//              2018/07/19 - PH v1.14 - added motor 0 step command
+//              2018/08/08 - PH v1.14 - added motor 0 step command
 //
 // Notes:       The embedded software is C because the inherent indirect
 //              addressing of C++ objects is too inefficient
