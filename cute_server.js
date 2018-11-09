@@ -756,10 +756,10 @@ function HandleError(err)
 }
 
 //-----------------------------------------------------------------------------
-// Handle USB errors
+// Handle USB end messages
 function HandleEnd()
 {
-    this.device.close();
+    this.device.close();    // close the device
 }
 
 //-----------------------------------------------------------------------------
@@ -956,9 +956,9 @@ function HandleResponse(avrNum, responseID, msg)
 
         case 'z':   // z = disable watchdog timer
             // forget about the unknown AVR
+            avrs[avrNum].interfaces[0].endpoints[0].device = avrs[avrNum];
             avrs[avrNum].interfaces[0].endpoints[0].on('end', HandleEnd);
             avrs[avrNum].interfaces[0].endpoints[0].stopPoll();
-            avrs[avrNum].interfaces[0].endpoints[0].device = avrs[avrNum];
             avrs[avrNum] = null;
             break;
 
