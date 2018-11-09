@@ -756,6 +756,13 @@ function HandleError(err)
 }
 
 //-----------------------------------------------------------------------------
+// Handle USB errors
+function HandleEnd()
+{
+    this.device.close();
+}
+
+//-----------------------------------------------------------------------------
 // Handle data received from our AVR devices
 function HandleData(data)
 {
@@ -846,11 +853,11 @@ function HandleResponse(avrNum, responseID, msg)
                     // turn on motors
                     avrs[avrNum].SendCmd('c.m0 on 1;m1 on 1;m2 on 1\n');
                 }
+                Log(avr, 'attached (s/n', msg + ')');
             } else {
-                avr = 'Unknown AVR';
                 avrs[avrNum].SendCmd('z.wdt 0\n');  // disable watchdog on unknown AVR
+                Log('Unknown AVR'+avrNum, '(s/n', msg + ')');
             }
-            Log(avr, 'attached (s/n', msg + ')');
             break;
 
         case 'b':   // b = log this response
@@ -949,6 +956,9 @@ function HandleResponse(avrNum, responseID, msg)
 
         case 'z':   // z = disable watchdog timer
             // forget about the unknown AVR
+            avrs[avrNum].interfaces[0].endpoints[0].on('end', HandleEnd);
+            avrs[avrNum].interfaces[0].endpoints[0].stopPoll();
+            avrs[avrNum].interfaces[0].endpoints[0].device = avrs[avrNum];
             avrs[avrNum] = null;
             break;
 
