@@ -113,7 +113,8 @@ Ouput current limits:
 CUTE AVR32 embedded code
 ------------------------
 
-To burn new code:
+To burn AVR32 code from PC
+>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 1) Run AVR32 studio on PC
 2) Select "Build All" from toolbar
@@ -127,6 +128,27 @@ burn.bat
 --------
 
 batchisp -hardware usb -device at32uc3b0256 -operation erase f loadbuffer "c:\Documents and Settings\Phil\My Documents\workspace\%1\Debug\%1.elf" program verify start reset 0
+
+To burn AVR32 code from Mac
+>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+Step 1: Generate hex image file
+-------------------------------
+1) (on Mac) cd ~/source/cute
+2) (on Mac) scp cute_avr32.c owl:avr32studio/as4e-ide/workspace/resurfacer_task/src/resurfacer_task.c
+3) (on owl) run /home/phil/avr32studio/as4e-ide/avr32studio
+4) (on owl) build the executable (elf)
+5) (on owl) cd /home/phil/avr32studio/as4e-ide/workspace/resurfacer_task
+6) (on owl) ../../plugins/com.atmel.avr.toolchains.linux.x86_64_3.0.0.201009140852/os/linux/x86_64/bin/avr32-objcopy -O ihex Debug/resurfacer_task.elf cute_avr32.hex
+7) (on Mac) scp owl:avr32studio/as4e-ide/workspace/resurfacer_task/resurfacer_task.hex cute_avr32.hex
+
+Step 2: Program the AVR32 on the Mac
+------------------------------------
+1) hold joystick down on AVR32 while pressing reset
+2) sudo ~/source/dfu-programmer/src/dfu-programmer at32uc3b0256 erase
+3) sudo ~/source/dfu-programmer/src/dfu-programmer at32uc3b0256 flash --suppress-bootloader-mem cute_avr32.hex
+4) sudo ~/source/dfu-programmer/src/dfu-programmer at32uc3b0256 reset
+
 
 Available commands implemented on the AVR32 (ver 1.14)
 ------------------------------------------------------
@@ -219,6 +241,14 @@ LED's
 
   LED3 - Turns on if the AVR32 has performed a watchdog timer reset.
          Turned off again by a "wdt #" command.
+
+Watchdog Timer
+--------------
+
+The first command received after power up activates the programmed AVR32
+watchdog timer with a default wait time of 1 second.  This will cause the
+AVR32 to reset after 1 second without receiving any commands.  To disable
+this, the first command sent to the AVR32 should be "wdt 0".
 
 Command/response synchronization
 --------------------------------
