@@ -34,7 +34,7 @@ const kBotLimit         = 1;        // PA1 is a bottom limit (and PA3, PA5, ...)
 const kHitLimit         = 0;        // digital value if we hit the limit switch
 const kNotLimit         = 1;        // digital value if limit switch is not activated
 
-const kDamperForceConst = 0.5;      // damper force constant (kg/mm)
+const kDamperForceConst = 50 / 9.81;// damper force constant (kg/mm)
 const kLoadNom          = 35;       // nominal damper load at nominal air pressure (kg)
 const kLoadMax          = 50;       // maximum damper load (kg) (lab jack limit)
 const kLoadMin          = 20;       // minimum damper load (kg)

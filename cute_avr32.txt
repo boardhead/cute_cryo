@@ -217,14 +217,14 @@ Available commands implemented on the AVR32 (ver 1.14)
 
   wdt [SECS]    - get/set watchdog timer (SECS is integer seconds, 0 to disable)
 
-  p# spd [SPD]  - run PWM# at specified speed (# is 6)
+  p6 spd [SPD]  - run PWM6 at specified speed
                     SPD = floating point steps/sec (or 0 to stop)
                     - speed range is 0.2 Hz to 37.5 kHz
                     - pulse width is 10.6 microseconds
 
-  p# halt       - stop PWM immediately ("stop" also works)
+  p6 halt       - stop PWM immediately ("stop" also works)
 
-  p# stat       - get status of PWM
+  p6 stat       - get status of PWM
 
   ser           - get AVR32 serial number
 
